@@ -29,4 +29,10 @@ impl FirewallService for WindowsFirewall {
             "Windows firewall not yet implemented".to_string(),
         ))
     }
+
+    async fn reset_and_block_servers(&self, _servers: &[Server]) -> Result<(), FirewallError> {
+        Err(FirewallError::Backend(
+            "Windows firewall not yet implemented".to_string(),
+        ))
+    }
 }

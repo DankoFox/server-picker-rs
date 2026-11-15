@@ -35,6 +35,11 @@ pub trait FirewallService: Send + Sync {
     /// Remove all rules created by this application.
     async fn reset_firewall(&self) -> Result<(), FirewallError>;
 
+    /// Reset the firewall and block the given servers in a single operation.
+    /// This is used when applying a preset so the user only sees one privilege
+    /// escalation prompt instead of two.
+    async fn reset_and_block_servers(&self, servers: &[Server]) -> Result<(), FirewallError>;
+
     // TODO(Phase 11/polish): Add a query method such as
     // `async fn blocked_relays(&self) -> Result<HashSet<String>, FirewallError>`
     // so the UI can reflect the real firewall state instead of only tracking
@@ -242,6 +247,13 @@ impl FirewallService for NoopFirewall {
     }
 
     async fn reset_firewall(&self) -> Result<(), FirewallError> {
+        Ok(())
+    }
+
+    async fn reset_and_block_servers(
+        &self,
+        _servers: &[crate::core::server::Server],
+    ) -> Result<(), FirewallError> {
         Ok(())
     }
 }

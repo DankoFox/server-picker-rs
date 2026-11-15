@@ -74,6 +74,13 @@ impl<R: CommandRunner> FirewallService for LinuxFirewall<R> {
             LinuxFirewallBackend::Iptables => self.reset_iptables().await,
         }
     }
+
+    async fn reset_and_block_servers(&self, servers: &[Server]) -> Result<(), FirewallError> {
+        match self.backend {
+            LinuxFirewallBackend::Nftables => self.reset_and_block_nftables(servers).await,
+            LinuxFirewallBackend::Iptables => self.reset_and_block_iptables(servers).await,
+        }
+    }
 }
 
 impl<R: CommandRunner> LinuxFirewall<R> {
@@ -123,6 +130,27 @@ impl<R: CommandRunner> LinuxFirewall<R> {
         let nft_script = format!("delete table inet {}\n", NFTABLES_TABLE);
         self.run_nft_script(&nft_script).await.ok();
         Ok(())
+    }
+
+    async fn reset_and_block_nftables(&self, servers: &[Server]) -> Result<(), FirewallError> {
+        let ips = Self::collect_ips(servers);
+        if ips.is_empty() {
+            return self.reset_nftables().await;
+        }
+
+        let elements = Self::format_nft_set_elements(&ips);
+        let nft_script = format!(
+            "delete table inet {table}\n\
+             add table inet {table}\n\
+             add chain inet {table} input {{ type filter hook input priority 0 ; policy accept ; }}\n\
+             add set inet {table} {set} {{ type ipv4_addr ; flags interval ; }}\n\
+             add rule inet {table} input ip saddr @{set} drop\n\
+             add element inet {table} {set} {elements}\n",
+            table = NFTABLES_TABLE,
+            set = NFTABLES_SET,
+        );
+
+        self.run_nft_script(&nft_script).await.map(|_| ())
     }
 
     async fn run_nft_script(&self, nft_script: &str) -> Result<String, FirewallError> {
@@ -186,6 +214,26 @@ impl<R: CommandRunner> LinuxFirewall<R> {
             chain = IPTABLES_CHAIN,
         );
         self.runner.run_script(&script).await.ok();
+        Ok(())
+    }
+
+    async fn reset_and_block_iptables(&self, servers: &[Server]) -> Result<(), FirewallError> {
+        let ips = Self::collect_ips(servers);
+        let mut script = format!(
+            "iptables -F {chain} 2>/dev/null; iptables -D INPUT -j {chain} 2>/dev/null; iptables -X {chain} 2>/dev/null; \
+             iptables -N {chain}; iptables -A INPUT -j {chain}",
+            chain = IPTABLES_CHAIN,
+        );
+
+        for ip in ips {
+            script.push_str(&format!(
+                "; iptables -A {chain} -s {ip} -j DROP",
+                chain = IPTABLES_CHAIN,
+                ip = ip
+            ));
+        }
+
+        self.runner.run_script(&script).await?;
         Ok(())
     }
 }
@@ -304,6 +352,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nftables_reset_and_block_builds_single_script() {
+        let runner = MockRunner {
+            succeed: true,
+            ..Default::default()
+        };
+        let fw = LinuxFirewall::with_backend(LinuxFirewallBackend::Nftables, runner.clone());
+        fw.reset_and_block_servers(&sample_servers()).await.unwrap();
+
+        let scripts = runner.scripts();
+        assert_eq!(scripts.len(), 1);
+        let script = &scripts[0];
+        assert!(script.contains("delete table inet server_picker_x"));
+        assert!(script.contains("add table inet server_picker_x"));
+        assert!(script.contains("192.0.2.1"));
+        assert!(script.contains("198.51.100.1"));
+    }
+
+    #[tokio::test]
     async fn iptables_block_adds_drop_rules() {
         let runner = MockRunner {
             succeed: true,
@@ -334,6 +400,24 @@ mod tests {
         assert!(script.contains("iptables -F SERVER_PICKER_X"));
         assert!(script.contains("iptables -D INPUT -j SERVER_PICKER_X"));
         assert!(script.contains("iptables -X SERVER_PICKER_X"));
+    }
+
+    #[tokio::test]
+    async fn iptables_reset_and_block_builds_single_script() {
+        let runner = MockRunner {
+            succeed: true,
+            ..Default::default()
+        };
+        let fw = LinuxFirewall::with_backend(LinuxFirewallBackend::Iptables, runner.clone());
+        fw.reset_and_block_servers(&sample_servers()).await.unwrap();
+
+        let scripts = runner.scripts();
+        assert_eq!(scripts.len(), 1);
+        let script = &scripts[0];
+        assert!(script.contains("iptables -F SERVER_PICKER_X"));
+        assert!(script.contains("iptables -A INPUT -j SERVER_PICKER_X"));
+        assert!(script.contains("iptables -A SERVER_PICKER_X -s 192.0.2.1 -j DROP"));
+        assert!(script.contains("iptables -A SERVER_PICKER_X -s 198.51.100.1 -j DROP"));
     }
 
     #[tokio::test]

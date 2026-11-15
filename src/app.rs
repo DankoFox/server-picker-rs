@@ -219,21 +219,18 @@ impl ServerPickerApp {
             Message::ServersLoaded(result) => match result {
                 Ok(data) => {
                     self.server_data = data;
+                    if self.startup_preset_pending {
+                        self.startup_preset_pending = false;
+                        if let Some(name) = self.active_preset_name.clone() {
+                            self.load_preset_state_without_applying(&name);
+                        }
+                    }
                     self.recompute_blocked_servers();
                     self.set_status(format!(
                         "Loaded {} servers (revision {})",
                         self.displayed_servers().len(),
                         self.server_data.revision
                     ));
-                    if self.startup_preset_pending {
-                        self.startup_preset_pending = false;
-                        if let Some(name) = self.active_preset_name.clone() {
-                            return Task::batch(vec![
-                                Task::done(Message::PingAll),
-                                self.apply_preset(&name),
-                            ]);
-                        }
-                    }
                     Task::done(Message::PingAll)
                 }
                 Err(err) => {
@@ -709,6 +706,43 @@ impl ServerPickerApp {
         self.save_settings_task()
     }
 
+    fn load_preset_state_without_applying(&mut self, name: &str) {
+        let Some(preset) = self
+            .settings
+            .settings()
+            .find_preset(&self.current_game_mode, name)
+            .cloned()
+        else {
+            return;
+        };
+
+        if preset.is_clustered != self.is_clustered {
+            self.is_clustered = preset.is_clustered;
+            self.settings.settings_mut().is_clustered = self.is_clustered;
+        }
+        self.search_text = preset.search_text.clone();
+
+        let target_keys: std::collections::HashSet<String> = preset
+            .blocked_server_keys
+            .iter()
+            .map(|k| k.to_lowercase())
+            .collect();
+        let relay_ips: Vec<String> = self
+            .displayed_servers()
+            .iter()
+            .filter(|server| target_keys.contains(&self.server_key(server).to_lowercase()))
+            .flat_map(|server| server.relays.iter().map(|relay| relay.ipv4.clone()))
+            .collect();
+        for ip in relay_ips {
+            self.blocked_relays.insert(ip);
+        }
+
+        self.set_status(format!(
+            "Preset '{}' loaded. Click Apply to enforce firewall rules.",
+            preset.name
+        ));
+    }
+
     fn apply_preset(&mut self, name: &str) -> Task<Message> {
         let Some(preset) = self
             .settings
@@ -778,9 +812,8 @@ impl ServerPickerApp {
         let firewall = self.firewall.clone();
         Task::perform(
             async move {
-                firewall.reset_firewall().await.map_err(|e| e.to_string())?;
                 firewall
-                    .block_servers(&target_servers)
+                    .reset_and_block_servers(&target_servers)
                     .await
                     .map_err(|e| e.to_string())
             },
