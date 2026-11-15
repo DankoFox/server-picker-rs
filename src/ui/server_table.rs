@@ -1,8 +1,6 @@
 use crate::app::{Message, ServerPickerApp};
 use crate::core::server::Server;
-use iced::widget::{
-    button, checkbox, text, Column, Container, Row, Scrollable, Space, Svg, Text,
-};
+use iced::widget::{button, checkbox, text, Column, Container, Row, Scrollable, Space, Svg, Text};
 use iced::{Alignment, Element, Length, Padding, Theme};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -331,10 +329,7 @@ fn svg_flag(code: &str) -> Option<Svg<'static, Theme>> {
     Some(Svg::new(iced::widget::svg::Handle::from_memory(bytes)))
 }
 
-fn firewall_state_text<'a>(
-    app: &'a ServerPickerApp,
-    server: &Server,
-) -> Element<'a, Message> {
+fn firewall_state_text<'a>(app: &'a ServerPickerApp, server: &Server) -> Element<'a, Message> {
     let is_blocked = server
         .relays
         .iter()
@@ -344,7 +339,11 @@ fn firewall_state_text<'a>(
         .size(11)
         .style(move |theme: &Theme| {
             let palette = theme.palette();
-            let color = if is_blocked { palette.danger } else { palette.success };
+            let color = if is_blocked {
+                palette.danger
+            } else {
+                palette.success
+            };
             text::Style { color: Some(color) }
         })
         .into()

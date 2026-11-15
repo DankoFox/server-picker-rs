@@ -222,9 +222,9 @@ impl ServerData {
             "netherlands" | "sweden" | "germany" | "france" | "uk" | "united kingdom"
             | "england" | "austria" | "belgium" | "bulgaria" | "czech republic" | "czechia"
             | "denmark" | "finland" | "italy" | "norway" | "poland" | "romania" | "russia"
-            | "serbia" | "spain" | "switzerland" | "turkey" | "ukraine" | "ireland" | "portugal"
-            | "hungary" | "slovakia" | "croatia" | "slovenia" | "latvia" | "lithuania"
-            | "estonia" | "greece" => "Europe",
+            | "serbia" | "spain" | "switzerland" | "turkey" | "ukraine" | "ireland"
+            | "portugal" | "hungary" | "slovakia" | "croatia" | "slovenia" | "latvia"
+            | "lithuania" | "estonia" | "greece" => "Europe",
 
             // North America
             "usa" | "united states" | "canada" | "mexico" | "puerto rico" | "california"

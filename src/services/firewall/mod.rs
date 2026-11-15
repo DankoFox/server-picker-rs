@@ -3,6 +3,7 @@ pub mod linux;
 pub mod windows;
 
 use crate::core::server::Server;
+use std::collections::HashSet;
 
 /// Errors that can occur during firewall operations.
 #[derive(Debug, thiserror::Error)]
@@ -40,11 +41,12 @@ pub trait FirewallService: Send + Sync {
     /// escalation prompt instead of two.
     async fn reset_and_block_servers(&self, servers: &[Server]) -> Result<(), FirewallError>;
 
-    // TODO(Phase 11/polish): Add a query method such as
-    // `async fn blocked_relays(&self) -> Result<HashSet<String>, FirewallError>`
-    // so the UI can reflect the real firewall state instead of only tracking
-    // in-session block/unblock actions. This will require parsing nftables set
-    // members or iptables rules and may need privilege escalation.
+    /// Return the relay IPv4 addresses currently blocked by the firewall.
+    ///
+    /// This lets the UI reflect the real firewall state after a restart,
+    /// because firewall rules (e.g. nftables sets or iptables chains) persist
+    /// independently of the application process.
+    async fn blocked_relays(&self) -> Result<HashSet<String>, FirewallError>;
 }
 
 /// Abstraction over process execution so backends can be unit tested.
@@ -255,6 +257,10 @@ impl FirewallService for NoopFirewall {
         _servers: &[crate::core::server::Server],
     ) -> Result<(), FirewallError> {
         Ok(())
+    }
+
+    async fn blocked_relays(&self) -> Result<HashSet<String>, FirewallError> {
+        Ok(HashSet::new())
     }
 }
 

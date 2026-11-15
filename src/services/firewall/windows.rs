@@ -1,5 +1,6 @@
 use crate::core::server::Server;
 use crate::services::firewall::{FirewallError, FirewallService};
+use std::collections::HashSet;
 
 /// Windows firewall placeholder for Phase 10.
 pub struct WindowsFirewall;
@@ -34,5 +35,9 @@ impl FirewallService for WindowsFirewall {
         Err(FirewallError::Backend(
             "Windows firewall not yet implemented".to_string(),
         ))
+    }
+
+    async fn blocked_relays(&self) -> Result<HashSet<String>, FirewallError> {
+        Ok(HashSet::new())
     }
 }

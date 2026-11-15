@@ -78,6 +78,7 @@ pub enum Message {
     UnblockAll,
     UnblockSelected,
     FirewallOperationComplete(Result<(), String>),
+    FirewallStateLoaded(Result<HashSet<String>, String>),
     ToggleServerSelection(String),
     OpenUrl(String),
     StatusSet(String),
@@ -240,19 +241,12 @@ impl ServerPickerApp {
                 Ok(data) => {
                     self.server_data = data;
                     self.rebuild_filtered_cache();
-                    if self.startup_preset_pending {
-                        self.startup_preset_pending = false;
-                        if let Some(name) = self.active_preset_name.clone() {
-                            self.load_preset_state_without_applying(&name);
-                        }
-                    }
-                    self.recompute_blocked_servers();
-                    self.set_status(format!(
-                        "Loaded {} servers (revision {})",
-                        self.displayed_servers().len(),
-                        self.server_data.revision
-                    ));
-                    Task::done(Message::PingAll)
+                    self.set_status("Reading firewall state...");
+                    let firewall = self.firewall.clone();
+                    Task::perform(
+                        async move { firewall.blocked_relays().await.map_err(|e| e.to_string()) },
+                        Message::FirewallStateLoaded,
+                    )
                 }
                 Err(err) => {
                     self.set_status(format!("Error: {}", err));
@@ -349,6 +343,31 @@ impl ServerPickerApp {
                         Task::none()
                     }
                 }
+            }
+            Message::FirewallStateLoaded(result) => {
+                match result {
+                    Ok(relays) => {
+                        self.blocked_relays = relays;
+                    }
+                    Err(err) => {
+                        tracing::warn!("Failed to read firewall state: {}", err);
+                    }
+                }
+
+                if self.startup_preset_pending {
+                    self.startup_preset_pending = false;
+                    if let Some(name) = self.active_preset_name.clone() {
+                        self.load_preset_state_without_applying(&name);
+                    }
+                }
+
+                self.recompute_blocked_servers();
+                self.set_status(format!(
+                    "Loaded {} servers (revision {})",
+                    self.displayed_servers().len(),
+                    self.server_data.revision
+                ));
+                Task::done(Message::PingAll)
             }
             Message::ToggleServerSelection(key) => {
                 if self.selected_servers.contains(&key) {

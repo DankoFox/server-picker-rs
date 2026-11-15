@@ -1,5 +1,6 @@
 use crate::core::server::Server;
 use crate::services::firewall::{CommandRunner, FirewallError, FirewallService};
+use std::collections::HashSet;
 
 const NFTABLES_TABLE: &str = "server_picker_x";
 const NFTABLES_SET: &str = "blocked_ips";
@@ -79,6 +80,13 @@ impl<R: CommandRunner> FirewallService for LinuxFirewall<R> {
         match self.backend {
             LinuxFirewallBackend::Nftables => self.reset_and_block_nftables(servers).await,
             LinuxFirewallBackend::Iptables => self.reset_and_block_iptables(servers).await,
+        }
+    }
+
+    async fn blocked_relays(&self) -> Result<HashSet<String>, FirewallError> {
+        match self.backend {
+            LinuxFirewallBackend::Nftables => self.list_blocked_nftables().await,
+            LinuxFirewallBackend::Iptables => self.list_blocked_iptables().await,
         }
     }
 }
@@ -236,6 +244,41 @@ impl<R: CommandRunner> LinuxFirewall<R> {
         self.runner.run_script(&script).await?;
         Ok(())
     }
+
+    async fn list_blocked_nftables(&self) -> Result<HashSet<String>, FirewallError> {
+        let output = self
+            .runner
+            .run(
+                "nft",
+                &[
+                    "list".to_string(),
+                    "set".to_string(),
+                    "inet".to_string(),
+                    NFTABLES_TABLE.to_string(),
+                    NFTABLES_SET.to_string(),
+                ],
+            )
+            .await;
+
+        match output {
+            Ok(stdout) => Ok(parse_nft_set_elements(&stdout)),
+            // If the table or set does not exist, nothing is blocked.
+            Err(_) => Ok(HashSet::new()),
+        }
+    }
+
+    async fn list_blocked_iptables(&self) -> Result<HashSet<String>, FirewallError> {
+        let output = self
+            .runner
+            .run("iptables", &["-S".to_string(), IPTABLES_CHAIN.to_string()])
+            .await;
+
+        match output {
+            Ok(stdout) => Ok(parse_iptables_rules(&stdout)),
+            // If the chain does not exist, nothing is blocked.
+            Err(_) => Ok(HashSet::new()),
+        }
+    }
 }
 
 fn command_exists(command: &str) -> bool {
@@ -244,6 +287,75 @@ fn command_exists(command: &str) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+/// Normalize an IP returned by a firewall backend so it matches the exact
+/// relay IPv4 strings stored in `Server::relays`. In practice the app only
+/// blocks individual host addresses, so /32 prefixes are stripped.
+fn normalize_blocked_ip(ip: &str) -> String {
+    ip.strip_suffix("/32").unwrap_or(ip).to_string()
+}
+
+/// Parse `nft list set` output and return the IPv4 addresses in the set.
+///
+/// Handles both single-line and multi-line `elements = { ... }` blocks.
+fn parse_nft_set_elements(output: &str) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let mut collecting = false;
+    let mut brace_depth: usize = 0;
+    let mut buffer = String::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        if !collecting {
+            if let Some(start) = trimmed.find("elements = {") {
+                collecting = true;
+                let content = &trimmed[start + "elements = {".len()..];
+                brace_depth = 1 + content.matches('{').count();
+                brace_depth = brace_depth.saturating_sub(content.matches('}').count());
+                buffer.push_str(content);
+            } else {
+                continue;
+            }
+        } else {
+            brace_depth += trimmed.matches('{').count();
+            brace_depth = brace_depth.saturating_sub(trimmed.matches('}').count());
+            buffer.push(' ');
+            buffer.push_str(trimmed);
+        }
+
+        if brace_depth == 0 {
+            let content = buffer.replace(['{', '}'], "");
+            for item in content.split(',') {
+                let ip = item.trim();
+                if !ip.is_empty() {
+                    result.insert(normalize_blocked_ip(ip));
+                }
+            }
+            break;
+        }
+    }
+
+    result
+}
+
+/// Parse `iptables -S <chain>` output and return source IPv4 addresses from
+/// DROP rules.
+fn parse_iptables_rules(output: &str) -> HashSet<String> {
+    let mut result = HashSet::new();
+
+    for line in output.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let Some(pos) = parts.iter().position(|&p| p == "-s") else {
+            continue;
+        };
+        if let Some(ip) = parts.get(pos + 1) {
+            result.insert(normalize_blocked_ip(ip));
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -258,6 +370,7 @@ mod tests {
         commands: Arc<Mutex<Vec<(String, Vec<String>)>>>,
         scripts: Arc<Mutex<Vec<String>>>,
         succeed: bool,
+        output: String,
     }
 
     impl MockRunner {
@@ -278,7 +391,7 @@ mod tests {
                 .unwrap()
                 .push((command.to_string(), args.to_vec()));
             if self.succeed {
-                Ok(String::new())
+                Ok(self.output.clone())
             } else {
                 Err(FirewallError::CommandFailed {
                     command: command.to_string(),
@@ -430,5 +543,128 @@ mod tests {
         fw.block_servers(&[]).await.unwrap();
         assert!(runner.scripts().is_empty());
         assert!(runner.commands().is_empty());
+    }
+
+    #[tokio::test]
+    async fn nftables_blocked_relays_returns_set_members() {
+        let runner = MockRunner {
+            succeed: true,
+            output: "elements = { 198.51.100.1 }".to_string(),
+            ..Default::default()
+        };
+        let fw = LinuxFirewall::with_backend(LinuxFirewallBackend::Nftables, runner.clone());
+        let relays = fw.blocked_relays().await.unwrap();
+        assert!(relays.contains("198.51.100.1"));
+        assert_eq!(relays.len(), 1);
+
+        let commands = runner.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].0, "nft");
+        assert!(commands[0].1.contains(&"list".to_string()));
+        assert!(commands[0].1.contains(&"blocked_ips".to_string()));
+    }
+
+    #[tokio::test]
+    async fn nftables_blocked_relays_returns_empty_on_missing_table() {
+        let runner = MockRunner {
+            succeed: false,
+            ..Default::default()
+        };
+        let fw = LinuxFirewall::with_backend(LinuxFirewallBackend::Nftables, runner.clone());
+        let relays = fw.blocked_relays().await.unwrap();
+        assert!(relays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn iptables_blocked_relays_returns_source_ips() {
+        let runner = MockRunner {
+            succeed: true,
+            output: "-N SERVER_PICKER_X\n-A SERVER_PICKER_X -s 198.51.100.1/32 -j DROP".to_string(),
+            ..Default::default()
+        };
+        let fw = LinuxFirewall::with_backend(LinuxFirewallBackend::Iptables, runner.clone());
+        let relays = fw.blocked_relays().await.unwrap();
+        assert!(relays.contains("198.51.100.1"));
+        assert_eq!(relays.len(), 1);
+
+        let commands = runner.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].0, "iptables");
+        assert!(commands[0].1.contains(&"-S".to_string()));
+        assert!(commands[0].1.contains(&"SERVER_PICKER_X".to_string()));
+    }
+
+    #[tokio::test]
+    async fn iptables_blocked_relays_returns_empty_on_missing_chain() {
+        let runner = MockRunner {
+            succeed: false,
+            ..Default::default()
+        };
+        let fw = LinuxFirewall::with_backend(LinuxFirewallBackend::Iptables, runner.clone());
+        let relays = fw.blocked_relays().await.unwrap();
+        assert!(relays.is_empty());
+    }
+
+    #[test]
+    fn parse_nft_set_elements_extracts_ips() {
+        let output = "table inet server_picker_x {\n\
+            set blocked_ips {\n\
+                type ipv4_addr\n\
+                flags interval\n\
+                elements = { 198.51.100.1, 203.0.113.0/24 }\n\
+            }\n\
+        }";
+        let ips = parse_nft_set_elements(output);
+        assert!(ips.contains("198.51.100.1"));
+        assert!(ips.contains("203.0.113.0/24"));
+        assert_eq!(ips.len(), 2);
+    }
+
+    #[test]
+    fn parse_nft_set_elements_normalizes_host_prefix() {
+        let output = "elements = { 198.51.100.1/32 }";
+        let ips = parse_nft_set_elements(output);
+        assert!(ips.contains("198.51.100.1"));
+        assert!(!ips.contains("198.51.100.1/32"));
+    }
+
+    #[test]
+    fn parse_nft_set_elements_handles_empty_set() {
+        let output = "elements = { }";
+        let ips = parse_nft_set_elements(output);
+        assert!(ips.is_empty());
+    }
+
+    #[test]
+    fn parse_nft_set_elements_handles_multiline_block() {
+        let output = "set blocked_ips {\n\
+            elements = {\n\
+                198.51.100.1,\n\
+                203.0.113.0/24\n\
+            }\n\
+        }";
+        let ips = parse_nft_set_elements(output);
+        assert!(ips.contains("198.51.100.1"));
+        assert!(ips.contains("203.0.113.0/24"));
+        assert_eq!(ips.len(), 2);
+    }
+
+    #[test]
+    fn parse_iptables_rules_extracts_sources() {
+        let output = "-N SERVER_PICKER_X\n\
+            -A SERVER_PICKER_X -s 198.51.100.1/32 -j DROP\n\
+            -A SERVER_PICKER_X -s 203.0.113.0/24 -j DROP";
+        let ips = parse_iptables_rules(output);
+        assert!(ips.contains("198.51.100.1"));
+        assert!(ips.contains("203.0.113.0/24"));
+        assert_eq!(ips.len(), 2);
+    }
+
+    #[test]
+    fn parse_iptables_rules_ignores_non_drop_lines() {
+        let output = "-N SERVER_PICKER_X\n\
+            -A SERVER_PICKER_X -s 198.51.100.1/32 -j ACCEPT";
+        let ips = parse_iptables_rules(output);
+        assert!(ips.contains("198.51.100.1"));
     }
 }

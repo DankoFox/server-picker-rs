@@ -126,11 +126,7 @@ impl AppSettings {
 
     /// Remove blocked server keys from presets when Valve removes servers.
     /// Returns `true` if any preset was modified.
-    pub fn prune_preset_entries(
-        &mut self,
-        game_mode: &str,
-        valid_keys: &[String],
-    ) -> bool {
+    pub fn prune_preset_entries(&mut self, game_mode: &str, valid_keys: &[String]) -> bool {
         let valid: std::collections::HashSet<String> =
             valid_keys.iter().map(|k| k.to_lowercase()).collect();
 
@@ -251,16 +247,11 @@ mod tests {
         preset.blocked_server_keys = vec!["hkg".to_string(), "old".to_string()];
         settings.add_or_update_preset(preset);
 
-        let changed = settings.prune_preset_entries(
-            "Counter Strike 2",
-            &["hkg".to_string()],
-        );
+        let changed = settings.prune_preset_entries("Counter Strike 2", &["hkg".to_string()]);
 
         assert!(changed);
 
-        let preset = settings
-            .find_preset("Counter Strike 2", "EU Only")
-            .unwrap();
+        let preset = settings.find_preset("Counter Strike 2", "EU Only").unwrap();
         assert_eq!(preset.blocked_server_keys, vec!["hkg"]);
     }
 

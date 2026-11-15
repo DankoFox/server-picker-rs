@@ -2,11 +2,11 @@ use crate::core::server::{Server, ServerStatus};
 
 #[cfg(test)]
 use crate::core::server::Relay;
+use futures::StreamExt;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use futures::StreamExt;
 use surge_ping::{Client, Config, PingIdentifier, PingSequence, SurgeError};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Instant};
