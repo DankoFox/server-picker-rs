@@ -5,8 +5,7 @@
     "displayName": "CS2",
     "appId": 730,
     "keywordFilterMode": "exclude",
-    "keywords": [ "China" ],
-    "clusterKeywords": [ "Hong Kong", "Sweden", "India", "Netherlands" ]
+    "keywords": [ "China" ]
   },
   {
     "gameMode": "Counter Strike 2 (Perfect World)",
@@ -14,8 +13,7 @@
     "displayName": "CS2 Perfect World",
     "appId": 730,
     "keywordFilterMode": "include",
-    "keywords": [ "China" ],
-    "clusterKeywords": [ "Tencent", "Alibaba", "Perfect World" ]
+    "keywords": [ "China" ]
   },
   {
     "gameMode": "Deadlock",
@@ -23,8 +21,7 @@
     "displayName": "Deadlock",
     "appId": 1422450,
     "keywordFilterMode": "none",
-    "keywords": [],
-    "clusterKeywords": [ "China", "Hong Kong", "Sweden", "India", "Netherlands" ]
+    "keywords": []
   },
   {
     "gameMode": "Marathon",
@@ -32,8 +29,7 @@
     "displayName": "Marathon",
     "appId": 3065800,
     "keywordFilterMode": "none",
-    "keywords": [],
-    "clusterKeywords": [ "Hong Kong", "Sweden", "India", "Netherlands" ]
+    "keywords": []
   },
   {
     "gameMode": "THE FINALS",
@@ -41,7 +37,6 @@
     "displayName": "THE FINALS",
     "appId": 2073850,
     "keywordFilterMode": "none",
-    "keywords": [],
-    "clusterKeywords": [ "Sweden", "India", "Washington" ]
+    "keywords": []
   }
 ]

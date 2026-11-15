@@ -93,12 +93,12 @@ impl SettingsService {
         self.save().await
     }
 
-    pub fn is_clustered(&self) -> bool {
-        self.settings.is_clustered
+    pub fn group_by_region(&self) -> bool {
+        self.settings.group_by_region
     }
 
-    pub async fn set_is_clustered(&mut self, clustered: bool) -> Result<(), SettingsError> {
-        self.settings.is_clustered = clustered;
+    pub async fn set_group_by_region(&mut self, enabled: bool) -> Result<(), SettingsError> {
+        self.settings.group_by_region = enabled;
         self.save().await
     }
 
@@ -196,14 +196,9 @@ impl SettingsService {
     pub async fn prune_preset_entries(
         &mut self,
         game_mode: &str,
-        valid_clustered_keys: &[String],
-        valid_unclustered_keys: &[String],
+        valid_keys: &[String],
     ) -> Result<bool, SettingsError> {
-        let changed = self.settings.prune_preset_entries(
-            game_mode,
-            valid_clustered_keys,
-            valid_unclustered_keys,
-        );
+        let changed = self.settings.prune_preset_entries(game_mode, valid_keys);
         if changed {
             self.save().await?;
         }
@@ -236,7 +231,7 @@ mod tests {
             let mut service = SettingsService::load_or_default_at(&path).await.unwrap();
             service.set_game_mode("Deadlock").await.unwrap();
             service.set_language("Russian | ru-ru").await.unwrap();
-            service.set_is_clustered(true).await.unwrap();
+            service.set_group_by_region(false).await.unwrap();
             service
                 .set_revision_for_app_id("1422450", "rev-42")
                 .await
@@ -250,7 +245,7 @@ mod tests {
         let loaded = SettingsService::load_or_default_at(&path).await.unwrap();
         assert_eq!(loaded.game_mode(), "Deadlock");
         assert_eq!(loaded.language(), "Russian | ru-ru");
-        assert!(loaded.is_clustered());
+        assert!(!loaded.group_by_region());
         assert_eq!(loaded.revision_for_app_id("1422450"), "rev-42");
         assert_eq!(
             loaded.last_selected_preset_for_game_mode("Deadlock"),
@@ -285,12 +280,11 @@ mod tests {
         let (mut service, _dir) = temp_service().await;
 
         let mut preset = Preset::new("Pruned", "Counter Strike 2");
-        preset.is_clustered = true;
         preset.blocked_server_keys = vec!["keep".to_string(), "remove".to_string()];
         service.add_or_update_preset(preset).await.unwrap();
 
         let changed = service
-            .prune_preset_entries("Counter Strike 2", &["keep".to_string()], &[])
+            .prune_preset_entries("Counter Strike 2", &["keep".to_string()])
             .await
             .unwrap();
         assert!(changed);

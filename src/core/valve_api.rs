@@ -208,7 +208,6 @@ mod tests {
             app_id: 730,
             keyword_filter_mode: KeywordFilterMode::Exclude,
             keywords: vec!["China".to_string()],
-            cluster_keywords: vec!["Hong Kong".to_string(), "Sweden".to_string()],
             response_url_template: GameModeDefinition::default().response_url_template,
         }
     }
@@ -226,7 +225,7 @@ mod tests {
         let data = parse_server_data(&sample_json(), &def).unwrap();
 
         let descriptions: Vec<&str> = data
-            .unclustered_servers
+            .servers
             .iter()
             .map(|s| s.description.as_str())
             .collect();
@@ -236,17 +235,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_server_data_clusters_hong_kong() {
+    fn parse_server_data_sorts_by_region() {
         let def = cs2_definition();
         let data = parse_server_data(&sample_json(), &def).unwrap();
 
-        let cluster = data
-            .clustered_servers
+        let hong_kong = data
+            .servers
             .iter()
             .find(|s| s.description == "Hong Kong")
-            .expect("Hong Kong cluster should exist");
-        assert_eq!(cluster.name, "cluster");
-        assert_eq!(cluster.relays.len(), 1);
+            .expect("Hong Kong server should exist");
+        assert_eq!(hong_kong.name, "hkg");
+        assert_eq!(hong_kong.relays.len(), 1);
+        assert_eq!(hong_kong.region_name(), "Hong Kong");
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod tests {
         let data = parse_server_data(json, &def).unwrap();
 
         let sgp = data
-            .unclustered_servers
+            .servers
             .iter()
             .find(|s| s.name == "sgp")
             .expect("Singapore server should exist");

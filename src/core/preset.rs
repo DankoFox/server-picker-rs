@@ -6,8 +6,6 @@ pub struct Preset {
     pub name: String,
     #[serde(rename = "gameMode")]
     pub game_mode: String,
-    #[serde(rename = "isClustered")]
-    pub is_clustered: bool,
     #[serde(
         rename = "searchText",
         default,

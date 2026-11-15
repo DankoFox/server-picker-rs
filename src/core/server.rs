@@ -153,6 +153,16 @@ impl Server {
         self.status = ServerStatus::Unknown;
     }
 
+    /// Displayable region/area name derived from the description.
+    pub fn region_name(&self) -> &str {
+        ServerData::region_name(&self.description)
+    }
+
+    /// Broader geographic region used for grouping servers in the UI.
+    pub fn region_group(&self) -> &'static str {
+        ServerData::region_group(self.region_name())
+    }
+
     /// Compute the average ping from the rolling history.
     pub fn average_ping_ms(&self) -> Option<u32> {
         if self.ping_history.is_empty() {
@@ -178,10 +188,64 @@ impl Server {
 pub struct ServerData {
     /// Revision string returned by the Valve API.
     pub revision: String,
-    /// Servers before any clustering is applied.
-    pub unclustered_servers: Vec<Server>,
-    /// Servers after cluster merging has been applied.
-    pub clustered_servers: Vec<Server>,
+    /// Servers after filtering has been applied.
+    pub servers: Vec<Server>,
+}
+
+impl ServerData {
+    /// Extract a displayable region/area name from a server description.
+    ///
+    /// Valve descriptions usually put the country/region in parentheses at the
+    /// end, e.g. "Amsterdam (Netherlands)". When there are no parentheses the
+    /// whole description is treated as the region name, e.g. "Hong Kong".
+    pub fn region_name(description: &str) -> &str {
+        let trimmed = description.trim();
+        trimmed
+            .rsplit_once('(')
+            .and_then(|(_, after)| after.split_once(')').map(|(inside, _)| inside))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(trimmed)
+    }
+
+    /// Map a region/country name to a broader geographic region suitable for
+    /// grouping servers in the UI (e.g. "Asia", "Europe", "North America").
+    pub fn region_group(region: &str) -> &'static str {
+        let lower = region.trim().to_lowercase();
+        match lower.as_str() {
+            // Asia
+            "hong kong" | "japan" | "singapore" | "south korea" | "china" | "india"
+            | "thailand" | "vietnam" | "taiwan" | "malaysia" | "indonesia" | "philippines"
+            | "sri lanka" | "guam" => "Asia",
+
+            // Europe
+            "netherlands" | "sweden" | "germany" | "france" | "uk" | "united kingdom"
+            | "england" | "austria" | "belgium" | "bulgaria" | "czech republic" | "czechia"
+            | "denmark" | "finland" | "italy" | "norway" | "poland" | "romania" | "russia"
+            | "serbia" | "spain" | "switzerland" | "turkey" | "ukraine" | "ireland" | "portugal"
+            | "hungary" | "slovakia" | "croatia" | "slovenia" | "latvia" | "lithuania"
+            | "estonia" | "greece" => "Europe",
+
+            // North America
+            "usa" | "united states" | "canada" | "mexico" | "puerto rico" | "california"
+            | "georgia" | "illinois" | "texas" | "virginia" | "washington" => "North America",
+
+            // South America
+            "argentina" | "brazil" | "chile" | "peru" | "colombia" => "South America",
+
+            // Oceania
+            "australia" | "new zealand" => "Oceania",
+
+            // Africa
+            "south africa" => "Africa",
+
+            // Middle East (grouped under Asia for simplicity, but kept here if
+            // we ever want to split them out)
+            "uae" | "united arab emirates" | "saudi arabia" => "Asia",
+
+            _ => "Unknown",
+        }
+    }
 }
 
 #[cfg(test)]

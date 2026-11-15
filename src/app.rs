@@ -9,6 +9,12 @@ use directories::ProjectDirs;
 use iced::{time, Element, Subscription, Task, Theme};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+/// Maximum number of servers being pinged at the same time.
+/// Independent pings are preserved; this only bounds in-flight probes
+/// so the async runtime and socket layer do not get overwhelmed.
+const MAX_CONCURRENT_PINGS: usize = 16;
 
 /// Tracks which servers were affected by an in-flight firewall operation.
 #[derive(Debug, Clone)]
@@ -62,7 +68,7 @@ impl AppFlags {
 pub enum Message {
     GameModeChanged(String),
     SearchChanged(String),
-    ToggleCluster,
+    ToggleGroupByRegion,
     LoadServers,
     ServersLoaded(Result<ServerData, String>),
     PingAll,
@@ -108,7 +114,7 @@ pub struct ServerPickerApp {
     http_client: reqwest::Client,
 
     pub current_game_mode: String,
-    pub is_clustered: bool,
+    pub group_by_region: bool,
     pub search_text: String,
     pub server_data: ServerData,
     pub selected_servers: HashSet<String>,
@@ -135,7 +141,7 @@ pub struct ServerPickerApp {
 impl ServerPickerApp {
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
         let current_game_mode = flags.settings.game_mode().to_string();
-        let is_clustered = flags.settings.is_clustered();
+        let group_by_region = flags.settings.group_by_region();
         let active_preset = flags
             .settings
             .settings()
@@ -149,7 +155,7 @@ impl ServerPickerApp {
             ping_service: flags.ping_service,
             http_client: flags.http_client,
             current_game_mode,
-            is_clustered,
+            group_by_region,
             search_text: String::new(),
             server_data: ServerData::default(),
             selected_servers: HashSet::new(),
@@ -192,11 +198,10 @@ impl ServerPickerApp {
                 self.search_text = text;
                 Task::none()
             }
-            Message::ToggleCluster => {
-                self.is_clustered = !self.is_clustered;
-                self.settings.settings_mut().is_clustered = self.is_clustered;
+            Message::ToggleGroupByRegion => {
+                self.group_by_region = !self.group_by_region;
+                self.settings.settings_mut().group_by_region = self.group_by_region;
                 self.selected_servers.clear();
-                self.recompute_blocked_servers();
                 let save = self.save_settings_task();
                 Task::batch(vec![save])
             }
@@ -243,15 +248,25 @@ impl ServerPickerApp {
                 let ping = self.ping_service.clone();
                 let servers = self.displayed_servers().clone();
                 self.set_status(format!("Pinging {} servers...", servers.len()));
+
+                // A semaphore lets every server ping independently and concurrently,
+                // but caps how many probes are active at once. Results still stream
+                // back one-by-one as each ping finishes.
+                let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PINGS));
                 Task::batch(servers.into_iter().map(move |server| {
                     let ping = ping.clone();
+                    let semaphore = semaphore.clone();
                     Task::perform(
                         async move {
+                            let _permit = semaphore.acquire().await.ok()?;
                             let mut server = server;
                             ping.ping_server(&mut server).await;
-                            server
+                            Some(server)
                         },
-                        Message::ServerPinged,
+                        |result| match result {
+                            Some(server) => Message::ServerPinged(server),
+                            None => Message::StatusSet(String::new()),
+                        },
                     )
                 }))
             }
@@ -358,15 +373,22 @@ impl ServerPickerApp {
                 }
                 let ping = self.ping_service.clone();
                 let servers = self.displayed_servers().clone();
+
+                let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PINGS));
                 Task::batch(servers.into_iter().map(move |server| {
                     let ping = ping.clone();
+                    let semaphore = semaphore.clone();
                     Task::perform(
                         async move {
+                            let _permit = semaphore.acquire().await.ok()?;
                             let mut server = server;
                             ping.ping_server(&mut server).await;
-                            server
+                            Some(server)
                         },
-                        Message::ServerPinged,
+                        |result| match result {
+                            Some(server) => Message::ServerPinged(server),
+                            None => Message::StatusSet(String::new()),
+                        },
                     )
                 }))
             }
@@ -555,6 +577,10 @@ impl ServerPickerApp {
         Theme::Dark
     }
 
+    pub fn group_by_region(&self) -> bool {
+        self.group_by_region
+    }
+
     pub fn ping_polling_enabled(&self) -> bool {
         self.settings.settings().ping_polling_enabled
     }
@@ -575,11 +601,7 @@ impl ServerPickerApp {
     }
 
     pub fn server_key(&self, server: &Server) -> String {
-        if self.is_clustered {
-            server.description.clone()
-        } else {
-            server.name.clone()
-        }
+        server.name.clone()
     }
 
     fn recompute_blocked_servers(&mut self) {
@@ -606,37 +628,23 @@ impl ServerPickerApp {
                 query.is_empty()
                     || server.name.to_lowercase().contains(&query)
                     || server.description.to_lowercase().contains(&query)
+                    || server.region_name().to_lowercase().contains(&query)
+                    || server.region_group().to_lowercase().contains(&query)
             })
             .collect()
     }
 
     fn displayed_servers(&self) -> &Vec<Server> {
-        if self.is_clustered {
-            &self.server_data.clustered_servers
-        } else {
-            &self.server_data.unclustered_servers
-        }
+        &self.server_data.servers
     }
 
     fn update_server(&mut self, server: Server) {
-        let is_clustered = self.is_clustered;
-        let key = if is_clustered {
-            server.description.clone()
-        } else {
-            server.name.clone()
-        };
-        let list = if is_clustered {
-            &mut self.server_data.clustered_servers
-        } else {
-            &mut self.server_data.unclustered_servers
-        };
-        if let Some(existing) = list.iter_mut().find(|s| {
-            if is_clustered {
-                s.description == key
-            } else {
-                s.name == key
-            }
-        }) {
+        if let Some(existing) = self
+            .server_data
+            .servers
+            .iter_mut()
+            .find(|s| s.name == server.name)
+        {
             *existing = server;
         }
     }
@@ -693,7 +701,6 @@ impl ServerPickerApp {
         let preset = crate::core::preset::Preset {
             name: name.clone(),
             game_mode: self.current_game_mode.clone(),
-            is_clustered: self.is_clustered,
             search_text: self.search_text.clone(),
             blocked_server_keys: keys,
         };
@@ -717,10 +724,6 @@ impl ServerPickerApp {
             return;
         };
 
-        if preset.is_clustered != self.is_clustered {
-            self.is_clustered = preset.is_clustered;
-            self.settings.settings_mut().is_clustered = self.is_clustered;
-        }
         self.search_text = preset.search_text.clone();
 
         let target_keys: std::collections::HashSet<String> = preset
@@ -764,10 +767,6 @@ impl ServerPickerApp {
         }
 
         // Restore view settings from the preset.
-        if preset.is_clustered != self.is_clustered {
-            self.is_clustered = preset.is_clustered;
-            self.settings.settings_mut().is_clustered = self.is_clustered;
-        }
         self.search_text = preset.search_text.clone();
         self.selected_servers.clear();
 

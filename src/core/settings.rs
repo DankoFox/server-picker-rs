@@ -14,8 +14,8 @@ pub struct AppSettings {
     #[serde(rename = "gameMode")]
     pub game_mode: String,
     pub language: String,
-    #[serde(rename = "isClustered")]
-    pub is_clustered: bool,
+    #[serde(rename = "groupByRegion", default)]
+    pub group_by_region: bool,
     #[serde(rename = "versionCheckOnStartup")]
     pub version_check_on_startup: bool,
     #[serde(rename = "pingPollingEnabled")]
@@ -35,7 +35,7 @@ impl Default for AppSettings {
             warning: DEFAULT_WARNING.to_string(),
             game_mode: DEFAULT_GAME_MODE.to_string(),
             language: DEFAULT_LANGUAGE.to_string(),
-            is_clustered: false,
+            group_by_region: true,
             version_check_on_startup: true,
             ping_polling_enabled: true,
             ping_polling_interval_seconds: 15,
@@ -111,7 +111,7 @@ impl AppSettings {
         preset.normalize_blocked_keys();
 
         if let Some(existing) = self.find_preset_mut(&preset.game_mode, &preset.name) {
-            existing.is_clustered = preset.is_clustered;
+            existing.search_text = preset.search_text;
             existing.blocked_server_keys = preset.blocked_server_keys;
         } else {
             self.presets.push(preset);
@@ -129,17 +129,10 @@ impl AppSettings {
     pub fn prune_preset_entries(
         &mut self,
         game_mode: &str,
-        valid_clustered_keys: &[String],
-        valid_unclustered_keys: &[String],
+        valid_keys: &[String],
     ) -> bool {
-        let valid_clustered: std::collections::HashSet<String> = valid_clustered_keys
-            .iter()
-            .map(|k| k.to_lowercase())
-            .collect();
-        let valid_unclustered: std::collections::HashSet<String> = valid_unclustered_keys
-            .iter()
-            .map(|k| k.to_lowercase())
-            .collect();
+        let valid: std::collections::HashSet<String> =
+            valid_keys.iter().map(|k| k.to_lowercase()).collect();
 
         let mut changed = false;
 
@@ -148,12 +141,6 @@ impl AppSettings {
             .iter_mut()
             .filter(|p| p.game_mode.eq_ignore_ascii_case(game_mode))
         {
-            let valid = if preset.is_clustered {
-                &valid_clustered
-            } else {
-                &valid_unclustered
-            };
-
             let original_len = preset.blocked_server_keys.len();
             preset.blocked_server_keys = preset
                 .blocked_server_keys
@@ -191,7 +178,6 @@ mod tests {
         assert_eq!(settings.warning, DEFAULT_WARNING);
         assert_eq!(settings.game_mode, DEFAULT_GAME_MODE);
         assert_eq!(settings.language, DEFAULT_LANGUAGE);
-        assert!(!settings.is_clustered);
         assert!(settings.version_check_on_startup);
     }
 
@@ -227,13 +213,11 @@ mod tests {
         let mut settings = AppSettings::default();
 
         let mut preset = Preset::new("EU Only", "Counter Strike 2");
-        preset.is_clustered = true;
         preset.blocked_server_keys = vec!["hkg".to_string(), "sto".to_string()];
         settings.add_or_update_preset(preset.clone());
 
         assert_eq!(settings.presets.len(), 1);
         let stored = settings.find_preset("Counter Strike 2", "EU Only").unwrap();
-        assert!(stored.is_clustered);
         assert_eq!(stored.blocked_server_keys, vec!["hkg", "sto"]);
 
         preset.blocked_server_keys = vec!["hkg".to_string()];
@@ -263,33 +247,21 @@ mod tests {
     fn prune_preset_entries_removes_stale_keys() {
         let mut settings = AppSettings::default();
 
-        let mut clustered = Preset::new("Clustered", "Counter Strike 2");
-        clustered.is_clustered = true;
-        clustered.blocked_server_keys = vec!["sweden".to_string(), "old".to_string()];
-        settings.add_or_update_preset(clustered);
-
-        let mut unclustered = Preset::new("Unclustered", "Counter Strike 2");
-        unclustered.is_clustered = false;
-        unclustered.blocked_server_keys = vec!["hkg".to_string(), "deprecated".to_string()];
-        settings.add_or_update_preset(unclustered);
+        let mut preset = Preset::new("EU Only", "Counter Strike 2");
+        preset.blocked_server_keys = vec!["hkg".to_string(), "old".to_string()];
+        settings.add_or_update_preset(preset);
 
         let changed = settings.prune_preset_entries(
             "Counter Strike 2",
-            &["sweden".to_string()],
             &["hkg".to_string()],
         );
 
         assert!(changed);
 
-        let clustered = settings
-            .find_preset("Counter Strike 2", "Clustered")
+        let preset = settings
+            .find_preset("Counter Strike 2", "EU Only")
             .unwrap();
-        assert_eq!(clustered.blocked_server_keys, vec!["sweden"]);
-
-        let unclustered = settings
-            .find_preset("Counter Strike 2", "Unclustered")
-            .unwrap();
-        assert_eq!(unclustered.blocked_server_keys, vec!["hkg"]);
+        assert_eq!(preset.blocked_server_keys, vec!["hkg"]);
     }
 
     #[test]

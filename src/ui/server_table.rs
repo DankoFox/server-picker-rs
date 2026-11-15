@@ -1,4 +1,5 @@
 use crate::app::{Message, ServerPickerApp};
+use crate::core::server::Server;
 use iced::widget::{button, checkbox, text, Column, Container, Row, Scrollable, Svg, Text};
 use iced::{Alignment, Element, Length, Padding, Theme};
 use std::collections::HashMap;
@@ -6,17 +7,39 @@ use std::sync::LazyLock;
 
 const HEADER_HEIGHT: f32 = 32.0;
 const ROW_HEIGHT: f32 = 36.0;
+const REGION_HEADER_HEIGHT: f32 = 26.0;
 
 pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     let headers = header_row();
-    let rows: Column<'a, Message> = app.filtered_servers().into_iter().enumerate().fold(
-        Column::new().spacing(1).width(Length::Fill),
-        |column, (index, server)| {
-            let key = app.server_key(server);
-            let is_selected = app.selected_servers.contains(&key);
-            column.push(data_row(app, server, index, key, is_selected))
-        },
-    );
+    let mut servers: Vec<&Server> = app.filtered_servers();
+    servers.sort_by(|a, b| {
+        a.region_group()
+            .cmp(b.region_group())
+            .then_with(|| a.region_name().cmp(b.region_name()))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    let rows: Column<'a, Message> = if app.group_by_region() {
+        servers
+            .chunk_by(|a, b| a.region_group() == b.region_group())
+            .fold(Column::new().spacing(1).width(Length::Fill), |column, group| {
+                let region = group.first().map(|s| s.region_group()).unwrap_or("Unknown");
+                let group_rows = group.iter().enumerate().fold(
+                    Column::new().spacing(1).width(Length::Fill),
+                    |column, (index, server)| {
+                        push_server_row(app, column, server, index)
+                    },
+                );
+                column
+                    .push(region_header(region))
+                    .push(group_rows)
+            })
+    } else {
+        servers.into_iter().enumerate().fold(
+            Column::new().spacing(1).width(Length::Fill),
+            |column, (index, server)| push_server_row(app, column, server, index),
+        )
+    };
 
     let table = Column::new()
         .push(headers)
@@ -40,6 +63,17 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
             }
         })
         .into()
+}
+
+fn push_server_row<'a>(
+    app: &'a ServerPickerApp,
+    column: Column<'a, Message>,
+    server: &'a Server,
+    index: usize,
+) -> Column<'a, Message> {
+    let key = app.server_key(server);
+    let is_selected = app.selected_servers.contains(&key);
+    column.push(data_row(app, server, index, key, is_selected))
 }
 
 fn header_row<'a>() -> Element<'a, Message> {
@@ -72,19 +106,37 @@ fn header_cell<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
         .into()
 }
 
+fn region_header<'a>(region: &'a str) -> Element<'a, Message> {
+    Container::new(
+        Row::new()
+            .push(Text::new(region).size(12))
+            .padding(Padding::from([0, 8])),
+    )
+    .width(Length::Fill)
+    .height(REGION_HEADER_HEIGHT)
+    .align_y(Alignment::Center)
+    .style(|theme: &Theme| {
+        let palette = theme.palette();
+        iced::widget::container::Style {
+            background: Some(palette.background.scale_alpha(0.5).into()),
+            ..Default::default()
+        }
+    })
+    .into()
+}
+
 fn data_row<'a>(
     app: &'a ServerPickerApp,
-    server: &'a crate::core::server::Server,
+    server: &'a Server,
     _index: usize,
     key: String,
     is_selected: bool,
 ) -> Element<'a, Message> {
-    let key_for_checkbox = key.clone();
+    let checkbox_key = key.clone();
     let checkbox_widget = checkbox(is_selected)
-        .on_toggle(move |_| Message::ToggleServerSelection(key_for_checkbox.clone()));
+        .on_toggle(move |_| Message::ToggleServerSelection(checkbox_key.clone()));
 
-    let description_text = server.description.clone();
-    let description: Element<'a, Message> = Container::new(Text::new(description_text).size(13))
+    let description: Element<'a, Message> = Container::new(Text::new(&server.description).size(13))
         .width(Length::Fill)
         .height(ROW_HEIGHT)
         .align_y(Alignment::Center)
@@ -95,7 +147,7 @@ fn data_row<'a>(
         .push(data_cell(checkbox_widget.into(), Length::Fixed(40.0)))
         .push(data_cell(flag_cell(&server.flag), Length::Fixed(80.0)))
         .push(data_cell(
-            Text::new(server.name.clone()).size(13).into(),
+            Text::new(&server.name).size(13).into(),
             Length::Fixed(80.0),
         ))
         .push(description)
@@ -201,7 +253,7 @@ fn svg_flag(code: &str) -> Option<Svg<'static, Theme>> {
 
 fn firewall_state_text<'a>(
     app: &'a ServerPickerApp,
-    server: &crate::core::server::Server,
+    server: &Server,
 ) -> Element<'a, Message> {
     let is_blocked = server
         .relays

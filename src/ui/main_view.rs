@@ -76,13 +76,13 @@ fn control_bar<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
         .on_input(Message::SearchChanged)
         .width(Length::Fixed(140.0));
 
-    let cluster_button = toolbar_button(
-        if app.is_clustered {
-            "Uncluster"
+    let group_button = toolbar_button(
+        if app.group_by_region() {
+            "Ungroup"
         } else {
-            "Cluster"
+            "Group"
         },
-        Message::ToggleCluster,
+        Message::ToggleGroupByRegion,
     );
 
     let preset_names: Vec<String> = app
@@ -114,7 +114,7 @@ fn control_bar<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     let config_group = Row::new()
         .push(game_mode_pick)
         .push(search)
-        .push(cluster_button)
+        .push(group_button)
         .spacing(CONTROL_SPACING)
         .align_y(Alignment::Center);
 

@@ -3,7 +3,10 @@ use crate::core::server::{Server, ServerStatus};
 #[cfg(test)]
 use crate::core::server::Relay;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use futures::StreamExt;
 use surge_ping::{Client, Config, PingIdentifier, PingSequence, SurgeError};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Instant};
@@ -12,6 +15,7 @@ const ICMP_TIMEOUT_MS: u64 = 500;
 const PROBE_TIMEOUT_MS: u64 = 1000;
 const PROBE_COUNT: usize = 2;
 const TCP_TIMEOUT_MS: u64 = 1000;
+const MAX_CONCURRENT_RELAY_SCANS: usize = 4;
 
 /// Errors that can occur during ping operations.
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +28,8 @@ pub enum PingError {
 
 /// Measures server reachability using ICMP with a TCP-connect fallback.
 pub struct PingService {
+    icmp_client: OnceLock<Option<Arc<Client>>>,
+    next_identifier: AtomicU16,
     icmp_timeout: Duration,
     probe_timeout: Duration,
     probe_count: usize,
@@ -40,6 +46,8 @@ impl PingService {
     /// Create a new ping service with default timeouts.
     pub fn new() -> Self {
         Self {
+            icmp_client: OnceLock::new(),
+            next_identifier: AtomicU16::new(1),
             icmp_timeout: Duration::from_millis(ICMP_TIMEOUT_MS),
             probe_timeout: Duration::from_millis(PROBE_TIMEOUT_MS),
             probe_count: PROBE_COUNT,
@@ -55,11 +63,29 @@ impl PingService {
         tcp_timeout: Duration,
     ) -> Self {
         Self {
+            icmp_client: OnceLock::new(),
+            next_identifier: AtomicU16::new(1),
             icmp_timeout,
             probe_timeout,
             probe_count,
             tcp_timeout,
         }
+    }
+
+    fn icmp_client(&self) -> Option<Arc<Client>> {
+        self.icmp_client
+            .get_or_init(|| {
+                let client = Client::new(&Config::default()).ok().map(Arc::new);
+                if client.is_none() {
+                    tracing::debug!("failed to create ICMP client; will use TCP fallback");
+                }
+                client
+            })
+            .clone()
+    }
+
+    fn next_identifier(&self) -> u16 {
+        self.next_identifier.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Ping a single server, updating its measurement fields in place.
@@ -70,47 +96,53 @@ impl PingService {
             return;
         }
 
-        let icmp_client = Client::new(&Config::default()).ok();
-        if icmp_client.is_none() {
-            tracing::debug!(server = %server.name, "failed to create ICMP client; will use TCP fallback");
-        }
+        let icmp_client = self.icmp_client();
 
         server.clear_measurement();
         server.status = ServerStatus::Pinging;
 
-        tracing::debug!(server = %server.name, relays = ?server.relays.iter().map(|r| &r.ipv4).collect::<Vec<_>>(), "starting relay scan");
+        let server_name = server.name.clone();
+        tracing::debug!(server = %server_name, relays = ?server.relays.iter().map(|r| &r.ipv4).collect::<Vec<_>>(), "starting relay scan");
 
-        let mut best_rtt = Duration::MAX;
-        let mut best_relay: Option<(String, u16)> = None;
-
-        // Phase 1: find the relay with the lowest RTT.
-        for relay in &server.relays {
-            if let Some(rtt) = self
-                .measure_relay(&relay.ipv4, relay.port_range_min, &icmp_client)
-                .await
-            {
-                tracing::debug!(server = %server.name, relay = %relay.ipv4, rtt_ms = %rtt.as_millis(), "relay measured");
-                if rtt < best_rtt {
-                    best_rtt = rtt;
-                    best_relay = Some((relay.ipv4.clone(), relay.port_range_min));
+        // Phase 1: find the relay with the lowest RTT, scanning relays concurrently
+        // but bounded so a server with many relays does not flood the socket layer.
+        let relay_infos: Vec<(String, u16)> = server
+            .relays
+            .iter()
+            .map(|relay| (relay.ipv4.clone(), relay.port_range_min))
+            .collect();
+        let icmp_client_ref = &icmp_client;
+        let measured_relays: Vec<_> = futures::stream::iter(relay_infos.into_iter().map(
+            |(ipv4, port)| {
+                let server_name = server_name.clone();
+                async move {
+                    let rtt = self.measure_relay(&ipv4, port, icmp_client_ref).await?;
+                    tracing::debug!(server = %server_name, relay = %ipv4, rtt_ms = %rtt.as_millis(), "relay measured");
+                    Some((rtt, ipv4, port))
                 }
-            } else {
-                tracing::debug!(server = %server.name, relay = %relay.ipv4, "relay unreachable");
-            }
-        }
+            },
+        ))
+        .buffer_unordered(MAX_CONCURRENT_RELAY_SCANS)
+        .collect()
+        .await;
 
-        let Some((best_ipv4, best_port)) = best_relay else {
-            tracing::debug!(server = %server.name, "all relays unreachable");
+        let best_relay = measured_relays
+            .into_iter()
+            .flatten()
+            .min_by_key(|(rtt, _, _)| *rtt);
+
+        let Some((best_rtt, best_ipv4, best_port)) = best_relay else {
+            tracing::debug!(server = %server_name, "all relays unreachable");
             server.status = ServerStatus::Failed;
             return;
         };
 
-        tracing::debug!(server = %server.name, best_relay = %best_ipv4, "selected best relay");
+        tracing::debug!(server = %server_name, best_relay = %best_ipv4, "selected best relay");
 
         // Phase 2: probe the best relay several times for packet loss.
         server.status = ServerStatus::Probing;
         let mut successes = 0u32;
-        let mut final_best_rtt = Duration::MAX;
+        let mut final_best_rtt = best_rtt;
 
         for _ in 0..self.probe_count {
             if let Some(rtt) = self
@@ -135,13 +167,12 @@ impl PingService {
         }
     }
 
-    /// Ping all servers concurrently.
+    /// Ping all servers concurrently with bounded concurrency.
     pub async fn ping_servers(&self, servers: &mut [Server]) {
-        let futures: Vec<_> = servers
-            .iter_mut()
-            .map(|server| self.ping_server(server))
-            .collect();
-        futures::future::join_all(futures).await;
+        futures::stream::iter(servers.iter_mut().map(|server| self.ping_server(server)))
+            .buffer_unordered(16)
+            .collect::<Vec<()>>()
+            .await;
     }
 
     /// Measure a single relay using ICMP, falling back to a TCP connect.
@@ -149,7 +180,7 @@ impl PingService {
         &self,
         ipv4: &str,
         port: u16,
-        icmp_client: &Option<Client>,
+        icmp_client: &Option<Arc<Client>>,
     ) -> Option<Duration> {
         self.measure_relay_with_timeout(ipv4, port, self.icmp_timeout, icmp_client)
             .await
@@ -160,12 +191,13 @@ impl PingService {
         ipv4: &str,
         port: u16,
         icmp_timeout: Duration,
-        icmp_client: &Option<Client>,
+        icmp_client: &Option<Arc<Client>>,
     ) -> Option<Duration> {
         // Try ICMP first if we have a client.
         if let Some(client) = icmp_client {
             if let Ok(addr) = ipv4.parse::<IpAddr>() {
-                let mut pinger = client.pinger(addr, PingIdentifier(0)).await;
+                let identifier = PingIdentifier(self.next_identifier());
+                let mut pinger = client.pinger(addr, identifier).await;
                 let sequence = PingSequence(0);
                 let payload = [];
 

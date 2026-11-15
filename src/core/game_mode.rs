@@ -43,8 +43,6 @@ pub struct GameModeDefinition {
     pub keyword_filter_mode: KeywordFilterMode,
     #[serde(default)]
     pub keywords: Vec<String>,
-    #[serde(rename = "clusterKeywords", default)]
-    pub cluster_keywords: Vec<String>,
     #[serde(
         rename = "responseUrlTemplate",
         default = "default_response_url_template"
@@ -65,7 +63,6 @@ impl Default for GameModeDefinition {
             app_id: 0,
             keyword_filter_mode: KeywordFilterMode::default(),
             keywords: Vec::new(),
-            cluster_keywords: Vec::new(),
             response_url_template: default_response_url_template(),
         }
     }
@@ -140,7 +137,6 @@ mod tests {
             app_id: 123,
             keyword_filter_mode: KeywordFilterMode::None,
             keywords: vec![],
-            cluster_keywords: vec![],
             response_url_template: "https://example.com/?appid={app_id}".to_string(),
         };
         assert_eq!(
