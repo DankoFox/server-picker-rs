@@ -36,7 +36,7 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Option<Element<'a, Message>> {
             iced::widget::container::Style {
                 background: Some(palette.background.into()),
                 border: iced::Border {
-                    color: palette.primary,
+                    color: palette.text.scale_alpha(0.08),
                     width: 1.0,
                     radius: iced::border::Radius::from(8.0),
                 },
@@ -144,9 +144,9 @@ fn preset_row<'a>(
                 button::Style {
                     background: Some(
                         (if status == button::Status::Hovered {
-                            palette.primary.scale_alpha(0.2)
+                            palette.text.scale_alpha(0.06)
                         } else {
-                            palette.background
+                            palette.background.scale_alpha(0.0)
                         })
                         .into(),
                     ),

@@ -88,6 +88,7 @@ pub enum Message {
     WindowIdReceived(Option<iced::window::Id>),
     PingPollTick,
     TogglePingPolling,
+    TableScrolled(iced::widget::scrollable::Viewport),
 
     // Preset manager
     PresetSelected(String),
@@ -121,6 +122,10 @@ pub struct ServerPickerApp {
     /// settings, kept sorted for stable rendering. Rebuilt on input changes;
     /// ping updates mutate `server_data.servers` in place so indices stay valid.
     cached_filtered_indices: Vec<usize>,
+    /// Vertical scroll offset of the server table, in logical pixels.
+    pub table_scroll_offset: f32,
+    /// Visible height of the server table viewport, in logical pixels.
+    pub table_viewport_height: f32,
     pub selected_servers: HashSet<String>,
     pub status_message: String,
     pub pending_operation: bool,
@@ -163,6 +168,8 @@ impl ServerPickerApp {
             search_text: String::new(),
             server_data: ServerData::default(),
             cached_filtered_indices: Vec::new(),
+            table_scroll_offset: 0.0,
+            table_viewport_height: 600.0,
             selected_servers: HashSet::new(),
             status_message: String::from("Ready"),
             pending_operation: false,
@@ -415,6 +422,12 @@ impl ServerPickerApp {
                     save
                 }
             }
+            Message::TableScrolled(viewport) => {
+                let offset = viewport.absolute_offset();
+                self.table_scroll_offset = offset.y;
+                self.table_viewport_height = viewport.bounds().height;
+                Task::none()
+            }
             Message::PresetSelected(name) => {
                 self.active_preset_name = Some(name);
                 if let Some(name) = self.active_preset_name.clone() {
@@ -582,7 +595,7 @@ impl ServerPickerApp {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::Dark
+        crate::ui::theme::minimal()
     }
 
     pub fn group_by_region(&self) -> bool {

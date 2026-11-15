@@ -2,6 +2,12 @@ use crate::core::preset::Preset;
 use crate::core::settings::AppSettings;
 use directories::ProjectDirs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{Mutex, Notify};
+
+/// Debounce delay for background settings writes.
+const SAVE_DEBOUNCE_MS: u64 = 500;
 
 /// Errors that can occur while loading or saving settings.
 #[derive(Debug, thiserror::Error)]
@@ -15,10 +21,17 @@ pub enum SettingsError {
 }
 
 /// Owns `AppSettings` persistence and exposes higher-level operations.
+///
+/// Saves are debounced: calling `save()` schedules a background write and
+/// returns immediately. Rapid successive calls coalesce into a single disk
+/// write. Use `flush()` when an immediate, synchronous write is required
+/// (e.g. in tests or on shutdown).
 #[derive(Clone)]
 pub struct SettingsService {
     settings: AppSettings,
     path: PathBuf,
+    save_notify: Arc<Notify>,
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl SettingsService {
@@ -46,14 +59,67 @@ impl SettingsService {
             tokio::fs::write(&path, json).await?;
             (settings, path)
         };
-        Ok(Self { settings, path })
+
+        let service = Self {
+            settings,
+            path,
+            save_notify: Arc::new(Notify::new()),
+            write_lock: Arc::new(Mutex::new(())),
+        };
+        service.spawn_saver_task();
+        Ok(service)
     }
 
-    /// Persist the current settings to disk.
-    pub async fn save(&self) -> Result<(), SettingsError> {
-        let json = serde_json::to_string_pretty(&self.settings)?;
-        tokio::fs::write(&self.path, json).await?;
+    fn spawn_saver_task(&self) {
+        let notify = Arc::clone(&self.save_notify);
+        let settings = self.settings.clone();
+        let path = self.path.clone();
+        let write_lock = Arc::clone(&self.write_lock);
+
+        tokio::spawn(async move {
+            loop {
+                notify.notified().await;
+
+                // Debounce: keep resetting the timer while new save requests
+                // arrive, then write once things go quiet.
+                while (tokio::time::timeout(
+                    Duration::from_millis(SAVE_DEBOUNCE_MS),
+                    notify.notified(),
+                )
+                .await)
+                    .is_ok()
+                {}
+
+                let _guard = write_lock.lock().await;
+                if let Err(e) = Self::write_settings(&settings, &path).await {
+                    tracing::error!("Failed to save settings: {}", e);
+                }
+            }
+        });
+    }
+
+    async fn write_settings(settings: &AppSettings, path: &Path) -> Result<(), SettingsError> {
+        let json = serde_json::to_string_pretty(settings)?;
+        tokio::fs::write(path, json).await?;
         Ok(())
+    }
+
+    /// Schedule the current settings to be persisted to disk.
+    ///
+    /// The actual write is debounced in the background; this method returns
+    /// immediately. Rapid successive calls coalesce into one disk write.
+    pub async fn save(&self) -> Result<(), SettingsError> {
+        self.save_notify.notify_one();
+        Ok(())
+    }
+
+    /// Persist settings to disk immediately, bypassing the debounce.
+    ///
+    /// Useful in tests and during shutdown.
+    pub async fn flush(&self) -> Result<(), SettingsError> {
+        self.save_notify.notify_one();
+        let _guard = self.write_lock.lock().await;
+        Self::write_settings(&self.settings, &self.path).await
     }
 
     /// Access the underlying settings immutably.
@@ -240,6 +306,7 @@ mod tests {
                 .set_last_selected_preset_for_game_mode("Deadlock", "My Preset")
                 .await
                 .unwrap();
+            service.flush().await.unwrap();
         }
 
         let loaded = SettingsService::load_or_default_at(&path).await.unwrap();
@@ -267,6 +334,7 @@ mod tests {
         let mut preset = Preset::new("EU", "Counter Strike 2");
         preset.blocked_server_keys = vec!["hkg".to_string()];
         service.add_or_update_preset(preset).await.unwrap();
+        service.flush().await.unwrap();
 
         let loaded = SettingsService::load_or_default_at(service.path())
             .await
@@ -288,6 +356,7 @@ mod tests {
             .await
             .unwrap();
         assert!(changed);
+        service.flush().await.unwrap();
 
         let loaded = SettingsService::load_or_default_at(service.path())
             .await

@@ -38,29 +38,25 @@ Implemented with `cached_filtered_indices: Vec<usize>` in `ServerPickerApp`. The
 
 ---
 
-### 4. Debounce `SettingsService::save()`
+### 4. Debounce `SettingsService::save()` ✅
 **File:** `src/services/settings_service.rs`
 
-Pretty-printed JSON is written to disk on almost every UI interaction (`GameModeChanged`, `ToggleCluster`, preset renames, etc.). Add a debounced/queued save task (e.g. 500 ms cooldown, coalesce redundant writes) to avoid fsync storms.
+Implemented a background saver task with `tokio::sync::Notify`. `save()` schedules a write and returns immediately; rapid successive calls reset a 500 ms debounce timer and coalesce into a single disk write. Added `flush()` for immediate writes (used in tests and available for shutdown).
 
 ---
 
 ## P1 — Bigger Architecture Improvements
 
-### 5. Virtualize the server table
+### 5. Virtualize the server table ✅
 **File:** `src/ui/server_table.rs`
 
-Every filtered row is materialized on every `view()` call:
+Implemented a custom virtual list using `Scrollable::on_scroll`. The table now:
+- Tracks `table_scroll_offset` and `table_viewport_height` in `ServerPickerApp`.
+- Builds a flat list of items (region headers + server rows) with known heights.
+- Renders only the visible slice plus 5 rows of overscan above and below.
+- Uses `Space` widgets above and below the visible slice to preserve total scrollable height.
 
-```rust
-let rows: Column<'a, Message> = app.filtered_servers().into_iter().enumerate().fold(...)
-```
-
-Iced has no built-in virtual list. Options:
-- Use `oriel-iced` (virtualized data grid).
-- Write a custom lazy list that renders only the visible viewport + overscan.
-
-This is the single biggest UI scaling win as server counts grow.
+This turns rendering from O(total servers) per frame to O(visible rows) per frame.
 
 ---
 
@@ -156,8 +152,8 @@ strip = true
 4. ~~Replace keyword clustering with UI region grouping~~ ✅
 5. ~~P1 #6 — Remove view-layer string clones~~ ✅
 6. ~~P0 #3 — Cache filtered server list~~ ✅
-7. P0 #4 — Debounce settings saves
-8. P1 #5 — Virtualize server table
+7. ~~P0 #4 — Debounce settings saves~~ ✅
+8. ~~P1 #5 — Virtualize server table~~ ✅
 9. P1 #8 — Optimize keyword filtering
 10. P1 #9 — Valve revision cache
 11. P2 items as time allows

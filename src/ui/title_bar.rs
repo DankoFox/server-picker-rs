@@ -51,7 +51,7 @@ fn title_bar_button<'a>(label: &'a str, message: Message) -> Element<'a, Message
     .style(|theme: &Theme, status: button::Status| {
         let palette = theme.palette();
         let background = match status {
-            button::Status::Hovered => palette.primary.scale_alpha(0.2),
+            button::Status::Hovered => palette.text.scale_alpha(0.06),
             _ => palette.background,
         };
         button::Style {

@@ -1,6 +1,8 @@
 use crate::app::{Message, ServerPickerApp};
 use crate::core::server::Server;
-use iced::widget::{button, checkbox, text, Column, Container, Row, Scrollable, Svg, Text};
+use iced::widget::{
+    button, checkbox, text, Column, Container, Row, Scrollable, Space, Svg, Text,
+};
 use iced::{Alignment, Element, Length, Padding, Theme};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -8,45 +10,57 @@ use std::sync::LazyLock;
 const HEADER_HEIGHT: f32 = 32.0;
 const ROW_HEIGHT: f32 = 36.0;
 const REGION_HEADER_HEIGHT: f32 = 26.0;
+/// Extra rows rendered above and below the viewport so small scrolls don't
+/// reveal blank space.
+const OVERSCAN_ROWS: usize = 5;
+
+/// A row in the virtualized table: either a region group header or a server.
+enum TableItem<'a> {
+    Region(&'a str),
+    Server(&'a Server),
+}
 
 pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     let headers = header_row();
-    let mut servers: Vec<&Server> = app.filtered_servers();
-    servers.sort_by(|a, b| {
-        a.region_group()
-            .cmp(b.region_group())
-            .then_with(|| a.region_name().cmp(b.region_name()))
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    let servers: Vec<&Server> = app.filtered_servers();
 
-    let rows: Column<'a, Message> = if app.group_by_region() {
-        servers
-            .chunk_by(|a, b| a.region_group() == b.region_group())
-            .fold(Column::new().spacing(1).width(Length::Fill), |column, group| {
-                let region = group.first().map(|s| s.region_group()).unwrap_or("Unknown");
-                let group_rows = group.iter().enumerate().fold(
-                    Column::new().spacing(1).width(Length::Fill),
-                    |column, (index, server)| {
-                        push_server_row(app, column, server, index)
-                    },
-                );
-                column
-                    .push(region_header(region))
-                    .push(group_rows)
-            })
+    let items: Vec<TableItem> = if app.group_by_region() {
+        let mut items = Vec::new();
+        for group in servers.chunk_by(|a, b| a.region_group() == b.region_group()) {
+            let region = group.first().map(|s| s.region_group()).unwrap_or("Unknown");
+            items.push(TableItem::Region(region));
+            for server in group {
+                items.push(TableItem::Server(server));
+            }
+        }
+        items
     } else {
-        servers.into_iter().enumerate().fold(
-            Column::new().spacing(1).width(Length::Fill),
-            |column, (index, server)| push_server_row(app, column, server, index),
-        )
+        servers.into_iter().map(TableItem::Server).collect()
     };
+
+    let (top_spacer, start, end, bottom_spacer) =
+        visible_slice(app, &items, ROW_HEIGHT, REGION_HEADER_HEIGHT);
+
+    let rows: Column<'a, Message> = items[start..end].iter().enumerate().fold(
+        Column::new().spacing(1).width(Length::Fill),
+        |column, (index, item)| match item {
+            TableItem::Region(region) => column.push(region_header(region)),
+            TableItem::Server(server) => push_server_row(app, column, server, index),
+        },
+    );
+
+    let content = Column::new()
+        .push(Space::new().height(Length::Fixed(top_spacer)))
+        .push(rows)
+        .push(Space::new().height(Length::Fixed(bottom_spacer)));
 
     let table = Column::new()
         .push(headers)
         .push(
-            Scrollable::new(rows)
+            Scrollable::new(content)
                 .width(Length::Fill)
-                .height(Length::Fill),
+                .height(Length::Fill)
+                .on_scroll(Message::TableScrolled),
         )
         .width(Length::Fill)
         .height(Length::Fill);
@@ -63,6 +77,57 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
             }
         })
         .into()
+}
+
+/// Compute the range of items that should be rendered for the current scroll
+/// position, plus spacer heights to preserve total scrollable size.
+fn visible_slice(
+    app: &ServerPickerApp,
+    items: &[TableItem],
+    row_height: f32,
+    header_height: f32,
+) -> (f32, usize, usize, f32) {
+    if items.is_empty() {
+        return (0.0, 0, 0, 0.0);
+    }
+
+    let overscan = OVERSCAN_ROWS as f32 * row_height;
+    let visible_start_y = (app.table_scroll_offset - overscan).max(0.0);
+    let visible_end_y = app.table_scroll_offset + app.table_viewport_height + overscan;
+
+    // Build cumulative Y positions for each item start.
+    let mut y_positions = vec![0.0];
+    let mut y = 0.0;
+    for item in items {
+        y += item_height(item, row_height, header_height);
+        y_positions.push(y);
+    }
+    let total_height = y;
+
+    let start = y_positions
+        .iter()
+        .position(|&pos| pos >= visible_start_y)
+        .unwrap_or(items.len())
+        .min(items.len());
+
+    let end = y_positions
+        .iter()
+        .position(|&pos| pos > visible_end_y)
+        .unwrap_or(items.len())
+        .min(items.len())
+        .max(start);
+
+    let top_spacer = y_positions[start];
+    let bottom_spacer = total_height - y_positions[end];
+
+    (top_spacer, start, end, bottom_spacer)
+}
+
+fn item_height(item: &TableItem, row_height: f32, header_height: f32) -> f32 {
+    match item {
+        TableItem::Region(_) => header_height,
+        TableItem::Server(_) => row_height,
+    }
 }
 
 fn push_server_row<'a>(
@@ -99,7 +164,12 @@ fn header_cell<'a>(label: &'a str, width: Length) -> Element<'a, Message> {
         .style(|theme: &Theme| {
             let palette = theme.palette();
             iced::widget::container::Style {
-                background: Some(palette.primary.into()),
+                background: Some(palette.text.scale_alpha(0.05).into()),
+                border: iced::Border {
+                    color: palette.text.scale_alpha(0.06),
+                    width: 1.0,
+                    radius: iced::border::Radius::from(0),
+                },
                 ..Default::default()
             }
         })
@@ -187,7 +257,7 @@ fn data_row<'a>(
         .style(|theme: &Theme, status: button::Status| {
             let palette = theme.palette();
             let background = match status {
-                button::Status::Hovered => palette.primary.scale_alpha(0.2),
+                button::Status::Hovered => palette.text.scale_alpha(0.05),
                 _ => palette.background,
             };
             button::Style {
@@ -222,9 +292,9 @@ fn flag_cell<'a>(code: &'a str) -> Element<'a, Message> {
             .style(|theme: &Theme| {
                 let palette = theme.palette();
                 iced::widget::container::Style {
-                    background: Some(palette.primary.scale_alpha(0.15).into()),
+                    background: Some(palette.text.scale_alpha(0.06).into()),
                     border: iced::Border {
-                        color: palette.primary.scale_alpha(0.4),
+                        color: palette.text.scale_alpha(0.1),
                         width: 1.0,
                         radius: iced::border::Radius::from(4.0),
                     },
@@ -259,14 +329,13 @@ fn firewall_state_text<'a>(
         .relays
         .iter()
         .any(|relay| app.blocked_relays.contains(&relay.ipv4));
-    let (label, color) = if is_blocked {
-        ("Blocked", iced::Color::from_rgb(1.0, 0.45, 0.45))
-    } else {
-        ("Open", iced::Color::from_rgb(0.45, 0.95, 0.45))
-    };
 
-    Text::new(label)
+    Text::new(if is_blocked { "Blocked" } else { "Open" })
         .size(11)
-        .style(move |_theme: &Theme| text::Style { color: Some(color) })
+        .style(move |theme: &Theme| {
+            let palette = theme.palette();
+            let color = if is_blocked { palette.danger } else { palette.success };
+            text::Style { color: Some(color) }
+        })
         .into()
 }

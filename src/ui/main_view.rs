@@ -161,9 +161,9 @@ fn control_bar<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     .style(|theme: &Theme| {
         let palette = theme.palette();
         iced::widget::container::Style {
-            background: Some(palette.background.scale_alpha(0.85).into()),
+            background: Some(palette.background.into()),
             border: iced::Border {
-                color: palette.primary.scale_alpha(0.15),
+                color: palette.text.scale_alpha(0.06),
                 width: 1.0,
                 radius: iced::border::Radius::from(0),
             },
@@ -180,7 +180,7 @@ fn separator<'a>() -> Element<'a, Message> {
         .style(|theme: &Theme| {
             let palette = theme.palette();
             iced::widget::container::Style {
-                background: Some(palette.primary.scale_alpha(0.25).into()),
+                background: Some(palette.text.scale_alpha(0.1).into()),
                 ..Default::default()
             }
         })
@@ -194,14 +194,14 @@ fn toolbar_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
         .style(|theme: &Theme, status: button::Status| {
             let palette = theme.palette();
             let background = match status {
-                button::Status::Hovered => palette.primary.scale_alpha(0.15),
-                _ => palette.background.scale_alpha(0.5),
+                button::Status::Hovered => palette.text.scale_alpha(0.06),
+                _ => palette.background.scale_alpha(0.0),
             };
             button::Style {
                 background: Some(background.into()),
                 text_color: palette.text,
                 border: iced::Border {
-                    color: palette.primary.scale_alpha(0.2),
+                    color: palette.text.scale_alpha(0.08),
                     width: 1.0,
                     radius: iced::border::Radius::from(4.0),
                 },
@@ -218,14 +218,14 @@ fn primary_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
         .style(|theme: &Theme, status: button::Status| {
             let palette = theme.palette();
             let background = match status {
-                button::Status::Hovered => palette.primary.scale_alpha(0.85),
-                _ => palette.primary.scale_alpha(0.7),
+                button::Status::Hovered => palette.text.scale_alpha(0.2),
+                _ => palette.primary,
             };
             button::Style {
                 background: Some(background.into()),
-                text_color: palette.background,
+                text_color: palette.text,
                 border: iced::Border {
-                    color: palette.primary.scale_alpha(0.3),
+                    color: palette.text.scale_alpha(0.1),
                     width: 1.0,
                     radius: iced::border::Radius::from(4.0),
                 },
@@ -239,16 +239,17 @@ fn danger_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
     Button::new(Text::new(label).size(11))
         .on_press(message)
         .padding(Padding::from([5, 8]))
-        .style(|_theme: &Theme, status: button::Status| {
+        .style(|theme: &Theme, status: button::Status| {
+            let palette = theme.palette();
             let background = match status {
-                button::Status::Hovered => iced::Color::from_rgb(0.9, 0.25, 0.25),
-                _ => iced::Color::from_rgb(0.8, 0.2, 0.2),
+                button::Status::Hovered => palette.danger.scale_alpha(0.12),
+                _ => palette.background.scale_alpha(0.0),
             };
             button::Style {
                 background: Some(background.into()),
-                text_color: iced::Color::WHITE,
+                text_color: palette.text,
                 border: iced::Border {
-                    color: iced::Color::from_rgb(0.9, 0.3, 0.3),
+                    color: palette.danger.scale_alpha(0.35),
                     width: 1.0,
                     radius: iced::border::Radius::from(4.0),
                 },
@@ -262,16 +263,17 @@ fn success_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
     Button::new(Text::new(label).size(11))
         .on_press(message)
         .padding(Padding::from([5, 8]))
-        .style(|_theme: &Theme, status: button::Status| {
+        .style(|theme: &Theme, status: button::Status| {
+            let palette = theme.palette();
             let background = match status {
-                button::Status::Hovered => iced::Color::from_rgb(0.25, 0.7, 0.35),
-                _ => iced::Color::from_rgb(0.2, 0.6, 0.28),
+                button::Status::Hovered => palette.success.scale_alpha(0.12),
+                _ => palette.background.scale_alpha(0.0),
             };
             button::Style {
                 background: Some(background.into()),
-                text_color: iced::Color::WHITE,
+                text_color: palette.text,
                 border: iced::Border {
-                    color: iced::Color::from_rgb(0.3, 0.7, 0.4),
+                    color: palette.success.scale_alpha(0.35),
                     width: 1.0,
                     radius: iced::border::Radius::from(4.0),
                 },
