@@ -1,0 +1,30 @@
+[package]
+name = "server-picker-rs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["ServerPickerX Contributors"]
+description = "Rust + Iced rewrite of ServerPickerX"
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+directories = "5"
+libc = "0.2"
+iced = { version = "0.13", features = ["tokio", "svg"] }
+open = "5"
+reqwest = { version = "0.12", features = ["json"] }
+rs-grid-icons = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+surge-ping = "0.8"
+futures = "0.3"
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-test = "0.4"
