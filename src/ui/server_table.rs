@@ -122,7 +122,7 @@ fn data_row<'a>(
             Length::Fixed(60.0),
         ))
         .push(data_cell(
-            firewall_state_text(app, &key),
+            firewall_state_text(app, server),
             Length::Fixed(60.0),
         ))
         .width(Length::Fill)
@@ -198,8 +198,15 @@ fn svg_flag(code: &str) -> Option<Svg<'static, Theme>> {
     Some(Svg::new(iced::widget::svg::Handle::from_memory(bytes)))
 }
 
-fn firewall_state_text<'a>(app: &'a ServerPickerApp, key: &str) -> Element<'a, Message> {
-    let (label, color) = if app.blocked_servers.contains(key) {
+fn firewall_state_text<'a>(
+    app: &'a ServerPickerApp,
+    server: &crate::core::server::Server,
+) -> Element<'a, Message> {
+    let is_blocked = server
+        .relays
+        .iter()
+        .any(|relay| app.blocked_relays.contains(&relay.ipv4));
+    let (label, color) = if is_blocked {
         ("Blocked", iced::Color::from_rgb(1.0, 0.45, 0.45))
     } else {
         ("Open", iced::Color::from_rgb(0.45, 0.95, 0.45))

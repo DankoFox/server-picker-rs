@@ -10,11 +10,11 @@ use iced::{time, Element, Subscription, Task, Theme};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// Tracks which server keys were affected by an in-flight firewall operation.
+/// Tracks which servers were affected by an in-flight firewall operation.
 #[derive(Debug, Clone)]
 enum PendingFirewallOp {
-    Block(Vec<String>),
-    Unblock(Vec<String>),
+    Block(Vec<Server>),
+    Unblock(Vec<Server>),
 }
 
 /// State for the preset management modal dialog.
@@ -116,14 +116,19 @@ pub struct ServerPickerApp {
     pub is_maximized: bool,
     pub window_id: Option<iced::window::Id>,
 
-    /// Servers marked as blocked in this session, keyed by `server_key`.
+    /// Servers marked as blocked in the current view, keyed by `server_key`.
     pub blocked_servers: HashSet<String>,
+    /// Relay IPv4 addresses currently blocked in the firewall. This is the
+    /// cross-view source of truth for the blocked state.
+    pub blocked_relays: HashSet<String>,
     pending_firewall_op: Option<PendingFirewallOp>,
 
     /// Name of the currently active preset, if any.
     pub active_preset_name: Option<String>,
     /// Modal dialog state for managing presets.
     pub preset_dialog: Option<PresetDialogState>,
+    /// Whether the last-selected preset should be applied once servers load on startup.
+    startup_preset_pending: bool,
 }
 
 impl ServerPickerApp {
@@ -152,9 +157,11 @@ impl ServerPickerApp {
             is_maximized: false,
             window_id: None,
             blocked_servers: HashSet::new(),
+            blocked_relays: HashSet::new(),
             pending_firewall_op: None,
-            active_preset_name: active_preset,
+            active_preset_name: active_preset.clone(),
             preset_dialog: None,
+            startup_preset_pending: active_preset.is_some(),
         };
 
         let mut tasks = vec![iced::window::get_oldest().map(Message::WindowIdReceived)];
@@ -176,7 +183,6 @@ impl ServerPickerApp {
                 self.current_game_mode = game_mode;
                 self.settings.settings_mut().game_mode = self.current_game_mode.clone();
                 self.selected_servers.clear();
-                self.blocked_servers.clear();
                 self.search_text.clear();
                 let save = self.save_settings_task();
                 Task::batch(vec![save, Task::done(Message::LoadServers)])
@@ -189,7 +195,7 @@ impl ServerPickerApp {
                 self.is_clustered = !self.is_clustered;
                 self.settings.settings_mut().is_clustered = self.is_clustered;
                 self.selected_servers.clear();
-                self.blocked_servers.clear();
+                self.recompute_blocked_servers();
                 let save = self.save_settings_task();
                 Task::batch(vec![save])
             }
@@ -213,11 +219,21 @@ impl ServerPickerApp {
             Message::ServersLoaded(result) => match result {
                 Ok(data) => {
                     self.server_data = data;
+                    self.recompute_blocked_servers();
                     self.set_status(format!(
                         "Loaded {} servers (revision {})",
                         self.displayed_servers().len(),
                         self.server_data.revision
                     ));
+                    if self.startup_preset_pending {
+                        self.startup_preset_pending = false;
+                        if let Some(name) = self.active_preset_name.clone() {
+                            return Task::batch(vec![
+                                Task::done(Message::PingAll),
+                                self.apply_preset(&name),
+                            ]);
+                        }
+                    }
                     Task::done(Message::PingAll)
                 }
                 Err(err) => {
@@ -274,14 +290,22 @@ impl ServerPickerApp {
                 if let Some(op) = self.pending_firewall_op.take() {
                     if result.is_ok() {
                         match op {
-                            PendingFirewallOp::Block(keys) => {
-                                for key in keys {
+                            PendingFirewallOp::Block(servers) => {
+                                for server in servers {
+                                    let key = self.server_key(&server);
                                     self.blocked_servers.insert(key);
+                                    for relay in &server.relays {
+                                        self.blocked_relays.insert(relay.ipv4.clone());
+                                    }
                                 }
                             }
-                            PendingFirewallOp::Unblock(keys) => {
-                                for key in keys {
+                            PendingFirewallOp::Unblock(servers) => {
+                                for server in servers {
+                                    let key = self.server_key(&server);
                                     self.blocked_servers.remove(&key);
+                                    for relay in &server.relays {
+                                        self.blocked_relays.remove(&relay.ipv4);
+                                    }
                                 }
                             }
                         }
@@ -560,6 +584,22 @@ impl ServerPickerApp {
         }
     }
 
+    fn recompute_blocked_servers(&mut self) {
+        let keys: Vec<String> = self
+            .displayed_servers()
+            .iter()
+            .filter(|server| {
+                server
+                    .relays
+                    .iter()
+                    .any(|relay| self.blocked_relays.contains(&relay.ipv4))
+            })
+            .map(|server| self.server_key(server))
+            .collect();
+        self.blocked_servers.clear();
+        self.blocked_servers.extend(keys);
+    }
+
     pub fn filtered_servers(&self) -> Vec<&Server> {
         let query = self.search_text.to_lowercase();
         self.displayed_servers()
@@ -720,10 +760,10 @@ impl ServerPickerApp {
             .settings_mut()
             .set_last_selected_preset_for_game_mode(&self.current_game_mode, &preset.name);
         self.blocked_servers.clear();
+        self.blocked_relays.clear();
 
-        let target_keys: Vec<String> = target_servers.iter().map(|s| self.server_key(s)).collect();
         self.pending_operation = true;
-        self.pending_firewall_op = Some(PendingFirewallOp::Block(target_keys));
+        self.pending_firewall_op = Some(PendingFirewallOp::Block(target_servers.clone()));
 
         let status = if missing_count > 0 {
             format!(
@@ -750,8 +790,7 @@ impl ServerPickerApp {
 
     fn perform_block(&mut self, servers: Vec<Server>) -> Task<Message> {
         self.pending_operation = true;
-        let keys: Vec<String> = servers.iter().map(|s| self.server_key(s)).collect();
-        self.pending_firewall_op = Some(PendingFirewallOp::Block(keys));
+        self.pending_firewall_op = Some(PendingFirewallOp::Block(servers.clone()));
         if !is_root() {
             self.set_status("Authentication required to block servers");
         } else {
@@ -771,8 +810,7 @@ impl ServerPickerApp {
 
     fn perform_unblock(&mut self, servers: Vec<Server>) -> Task<Message> {
         self.pending_operation = true;
-        let keys: Vec<String> = servers.iter().map(|s| self.server_key(s)).collect();
-        self.pending_firewall_op = Some(PendingFirewallOp::Unblock(keys));
+        self.pending_firewall_op = Some(PendingFirewallOp::Unblock(servers.clone()));
         if !is_root() {
             self.set_status("Authentication required to unblock servers");
         } else {
