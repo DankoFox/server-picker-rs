@@ -26,15 +26,15 @@ Implemented with a lazily-initialized `Arc<Client>` stored in `PingService`. The
 
 ---
 
-### 3. Cache the filtered server list
-**File:** `src/app.rs`, `src/ui/server_table.rs`
+### 3. Cache the filtered server list ✅
+**File:** `src/app.rs`
 
-`filtered_servers()` is called from `view`, `BlockAll`, `BlockSelected`, `selected_server_models`, etc. It re-runs `to_lowercase()` and string `contains` every time.
-
-Cache the filtered list in `ServerPickerApp` and invalidate only on:
+Implemented with `cached_filtered_indices: Vec<usize>` in `ServerPickerApp`. The filter/sort work is done once per input change and subsequent `filtered_servers()` calls just map indices to references. Invalidated on:
 - `SearchChanged`
-- `ToggleCluster`
+- `ToggleGroupByRegion`
 - `ServersLoaded`
+
+`ServerPinged` mutates `server_data.servers` in place, so cached indices remain valid.
 
 ---
 
@@ -155,7 +155,7 @@ strip = true
 3. ~~P1 #7 — Concurrent relay scanning~~ ✅
 4. ~~Replace keyword clustering with UI region grouping~~ ✅
 5. ~~P1 #6 — Remove view-layer string clones~~ ✅
-6. P0 #3 — Cache filtered server list
+6. ~~P0 #3 — Cache filtered server list~~ ✅
 7. P0 #4 — Debounce settings saves
 8. P1 #5 — Virtualize server table
 9. P1 #8 — Optimize keyword filtering

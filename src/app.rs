@@ -117,6 +117,10 @@ pub struct ServerPickerApp {
     pub group_by_region: bool,
     pub search_text: String,
     pub server_data: ServerData,
+    /// Indices into `server_data.servers` that match the current search/group
+    /// settings, kept sorted for stable rendering. Rebuilt on input changes;
+    /// ping updates mutate `server_data.servers` in place so indices stay valid.
+    cached_filtered_indices: Vec<usize>,
     pub selected_servers: HashSet<String>,
     pub status_message: String,
     pub pending_operation: bool,
@@ -158,6 +162,7 @@ impl ServerPickerApp {
             group_by_region,
             search_text: String::new(),
             server_data: ServerData::default(),
+            cached_filtered_indices: Vec::new(),
             selected_servers: HashSet::new(),
             status_message: String::from("Ready"),
             pending_operation: false,
@@ -196,12 +201,14 @@ impl ServerPickerApp {
             }
             Message::SearchChanged(text) => {
                 self.search_text = text;
+                self.rebuild_filtered_cache();
                 Task::none()
             }
             Message::ToggleGroupByRegion => {
                 self.group_by_region = !self.group_by_region;
                 self.settings.settings_mut().group_by_region = self.group_by_region;
                 self.selected_servers.clear();
+                self.rebuild_filtered_cache();
                 let save = self.save_settings_task();
                 Task::batch(vec![save])
             }
@@ -225,6 +232,7 @@ impl ServerPickerApp {
             Message::ServersLoaded(result) => match result {
                 Ok(data) => {
                     self.server_data = data;
+                    self.rebuild_filtered_cache();
                     if self.startup_preset_pending {
                         self.startup_preset_pending = false;
                         if let Some(name) = self.active_preset_name.clone() {
@@ -621,17 +629,39 @@ impl ServerPickerApp {
     }
 
     pub fn filtered_servers(&self) -> Vec<&Server> {
-        let query = self.search_text.to_lowercase();
-        self.displayed_servers()
+        self.cached_filtered_indices
             .iter()
-            .filter(|server| {
+            .map(|&i| &self.server_data.servers[i])
+            .collect()
+    }
+
+    fn rebuild_filtered_cache(&mut self) {
+        let query = self.search_text.to_lowercase();
+        let mut indices: Vec<usize> = self
+            .server_data
+            .servers
+            .iter()
+            .enumerate()
+            .filter(|(_, server)| {
                 query.is_empty()
                     || server.name.to_lowercase().contains(&query)
                     || server.description.to_lowercase().contains(&query)
                     || server.region_name().to_lowercase().contains(&query)
                     || server.region_group().to_lowercase().contains(&query)
             })
-            .collect()
+            .map(|(i, _)| i)
+            .collect();
+
+        indices.sort_by(|&a, &b| {
+            let sa = &self.server_data.servers[a];
+            let sb = &self.server_data.servers[b];
+            sa.region_group()
+                .cmp(sb.region_group())
+                .then_with(|| sa.region_name().cmp(sb.region_name()))
+                .then_with(|| sa.name.cmp(&sb.name))
+        });
+
+        self.cached_filtered_indices = indices;
     }
 
     fn displayed_servers(&self) -> &Vec<Server> {
