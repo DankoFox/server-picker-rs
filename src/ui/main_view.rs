@@ -35,9 +35,14 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
         .width(Length::Fill)
         .height(Length::Fill);
 
+    let root = Container::new(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(0);
+
     if let Some(dialog) = preset_dialog::view(app) {
         Stack::new()
-            .push(content)
+            .push(root)
             .push(
                 Container::new(dialog)
                     .width(Length::Fill)
@@ -54,7 +59,7 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
             )
             .into()
     } else {
-        content.into()
+        root.into()
     }
 }
 
@@ -321,5 +326,6 @@ fn status_footer<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
         .spacing(CONTROL_SPACING)
         .padding(SECTION_PADDING)
         .width(Length::Fill)
+        .height(Length::Fixed(28.0))
         .into()
 }

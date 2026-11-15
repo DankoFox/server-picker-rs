@@ -38,7 +38,7 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
         servers.into_iter().map(TableItem::Server).collect()
     };
 
-    let (top_spacer, start, end, bottom_spacer) =
+    let (top_spacer, start, end, bottom_spacer, total_height) =
         visible_slice(app, &items, ROW_HEIGHT, REGION_HEADER_HEIGHT);
 
     let rows: Column<'a, Message> = items[start..end].iter().enumerate().fold(
@@ -49,10 +49,20 @@ pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
         },
     );
 
+    // When every row fits inside the viewport, extend the content so the
+    // scrollable area still fills the table instead of leaving blank space.
+    let filler_height = if end == items.len() {
+        (app.table_viewport_height - total_height).max(0.0)
+    } else {
+        0.0
+    };
+
     let content = Column::new()
         .push(Space::new().height(Length::Fixed(top_spacer)))
         .push(rows)
-        .push(Space::new().height(Length::Fixed(bottom_spacer)));
+        .push(Space::new().height(Length::Fixed(bottom_spacer)))
+        .push(Space::new().height(Length::Fixed(filler_height)))
+        .width(Length::Fill);
 
     let table = Column::new()
         .push(headers)
@@ -86,9 +96,9 @@ fn visible_slice(
     items: &[TableItem],
     row_height: f32,
     header_height: f32,
-) -> (f32, usize, usize, f32) {
+) -> (f32, usize, usize, f32, f32) {
     if items.is_empty() {
-        return (0.0, 0, 0, 0.0);
+        return (0.0, 0, 0, 0.0, 0.0);
     }
 
     let overscan = OVERSCAN_ROWS as f32 * row_height;
@@ -120,7 +130,7 @@ fn visible_slice(
     let top_spacer = y_positions[start];
     let bottom_spacer = total_height - y_positions[end];
 
-    (top_spacer, start, end, bottom_spacer)
+    (top_spacer, start, end, bottom_spacer, total_height)
 }
 
 fn item_height(item: &TableItem, row_height: f32, header_height: f32) -> f32 {
