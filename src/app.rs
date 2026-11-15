@@ -65,7 +65,7 @@ pub enum Message {
     LoadServers,
     ServersLoaded(Result<ServerData, String>),
     PingAll,
-    ServersPinged(Vec<Server>),
+    ServerPinged(Server),
     BlockAll,
     BlockSelected,
     UnblockAll,
@@ -228,22 +228,21 @@ impl ServerPickerApp {
             Message::PingAll => {
                 let ping = self.ping_service.clone();
                 let servers = self.displayed_servers().clone();
-                self.set_status("Pinging servers...");
-                Task::perform(
-                    async move {
-                        let mut servers = servers;
-                        ping.ping_servers(&mut servers).await;
-                        servers
-                    },
-                    Message::ServersPinged,
-                )
+                self.set_status(format!("Pinging {} servers...", servers.len()));
+                Task::batch(servers.into_iter().map(move |server| {
+                    let ping = ping.clone();
+                    Task::perform(
+                        async move {
+                            let mut server = server;
+                            ping.ping_server(&mut server).await;
+                            server
+                        },
+                        Message::ServerPinged,
+                    )
+                }))
             }
-            Message::ServersPinged(pinged_servers) => {
-                if self.is_clustered {
-                    self.server_data.clustered_servers = pinged_servers;
-                } else {
-                    self.server_data.unclustered_servers = pinged_servers;
-                }
+            Message::ServerPinged(server) => {
+                self.update_server(server);
                 Task::none()
             }
             Message::BlockAll => {
@@ -337,14 +336,17 @@ impl ServerPickerApp {
                 }
                 let ping = self.ping_service.clone();
                 let servers = self.displayed_servers().clone();
-                Task::perform(
-                    async move {
-                        let mut servers = servers;
-                        ping.ping_servers(&mut servers).await;
-                        servers
-                    },
-                    Message::ServersPinged,
-                )
+                Task::batch(servers.into_iter().map(move |server| {
+                    let ping = ping.clone();
+                    Task::perform(
+                        async move {
+                            let mut server = server;
+                            ping.ping_server(&mut server).await;
+                            server
+                        },
+                        Message::ServerPinged,
+                    )
+                }))
             }
             Message::TogglePingPolling => {
                 let new_state = !self.settings.settings().ping_polling_enabled;
@@ -575,6 +577,29 @@ impl ServerPickerApp {
             &self.server_data.clustered_servers
         } else {
             &self.server_data.unclustered_servers
+        }
+    }
+
+    fn update_server(&mut self, server: Server) {
+        let is_clustered = self.is_clustered;
+        let key = if is_clustered {
+            server.description.clone()
+        } else {
+            server.name.clone()
+        };
+        let list = if is_clustered {
+            &mut self.server_data.clustered_servers
+        } else {
+            &mut self.server_data.unclustered_servers
+        };
+        if let Some(existing) = list.iter_mut().find(|s| {
+            if is_clustered {
+                s.description == key
+            } else {
+                s.name == key
+            }
+        }) {
+            *existing = server;
         }
     }
 

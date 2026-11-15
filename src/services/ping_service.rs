@@ -1,13 +1,16 @@
-use crate::core::server::{Relay, Server, ServerStatus};
+use crate::core::server::{Server, ServerStatus};
+
+#[cfg(test)]
+use crate::core::server::Relay;
 use std::net::IpAddr;
 use std::time::Duration;
 use surge_ping::{Client, Config, PingIdentifier, PingSequence, SurgeError};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Instant};
 
-const ICMP_TIMEOUT_MS: u64 = 800;
-const PROBE_TIMEOUT_MS: u64 = 2000;
-const PROBE_COUNT: usize = 4;
+const ICMP_TIMEOUT_MS: u64 = 500;
+const PROBE_TIMEOUT_MS: u64 = 1000;
+const PROBE_COUNT: usize = 2;
 const TCP_TIMEOUT_MS: u64 = 1000;
 
 /// Errors that can occur during ping operations.
@@ -78,28 +81,31 @@ impl PingService {
         tracing::debug!(server = %server.name, relays = ?server.relays.iter().map(|r| &r.ipv4).collect::<Vec<_>>(), "starting relay scan");
 
         let mut best_rtt = Duration::MAX;
-        let mut best_relay: Option<&Relay> = None;
+        let mut best_relay: Option<(String, u16)> = None;
 
         // Phase 1: find the relay with the lowest RTT.
         for relay in &server.relays {
-            if let Some(rtt) = self.measure_relay(relay, &icmp_client).await {
+            if let Some(rtt) = self
+                .measure_relay(&relay.ipv4, relay.port_range_min, &icmp_client)
+                .await
+            {
                 tracing::debug!(server = %server.name, relay = %relay.ipv4, rtt_ms = %rtt.as_millis(), "relay measured");
                 if rtt < best_rtt {
                     best_rtt = rtt;
-                    best_relay = Some(relay);
+                    best_relay = Some((relay.ipv4.clone(), relay.port_range_min));
                 }
             } else {
                 tracing::debug!(server = %server.name, relay = %relay.ipv4, "relay unreachable");
             }
         }
 
-        let Some(best_relay) = best_relay else {
+        let Some((best_ipv4, best_port)) = best_relay else {
             tracing::debug!(server = %server.name, "all relays unreachable");
             server.status = ServerStatus::Failed;
             return;
         };
 
-        tracing::debug!(server = %server.name, best_relay = %best_relay.ipv4, "selected best relay");
+        tracing::debug!(server = %server.name, best_relay = %best_ipv4, "selected best relay");
 
         // Phase 2: probe the best relay several times for packet loss.
         server.status = ServerStatus::Probing;
@@ -108,7 +114,7 @@ impl PingService {
 
         for _ in 0..self.probe_count {
             if let Some(rtt) = self
-                .measure_relay_with_timeout(best_relay, self.probe_timeout, &icmp_client)
+                .measure_relay_with_timeout(&best_ipv4, best_port, self.probe_timeout, &icmp_client)
                 .await
             {
                 successes += 1;
@@ -139,20 +145,26 @@ impl PingService {
     }
 
     /// Measure a single relay using ICMP, falling back to a TCP connect.
-    async fn measure_relay(&self, relay: &Relay, icmp_client: &Option<Client>) -> Option<Duration> {
-        self.measure_relay_with_timeout(relay, self.icmp_timeout, icmp_client)
+    async fn measure_relay(
+        &self,
+        ipv4: &str,
+        port: u16,
+        icmp_client: &Option<Client>,
+    ) -> Option<Duration> {
+        self.measure_relay_with_timeout(ipv4, port, self.icmp_timeout, icmp_client)
             .await
     }
 
     async fn measure_relay_with_timeout(
         &self,
-        relay: &Relay,
+        ipv4: &str,
+        port: u16,
         icmp_timeout: Duration,
         icmp_client: &Option<Client>,
     ) -> Option<Duration> {
         // Try ICMP first if we have a client.
         if let Some(client) = icmp_client {
-            if let Ok(addr) = relay.ipv4.parse::<IpAddr>() {
+            if let Ok(addr) = ipv4.parse::<IpAddr>() {
                 let mut pinger = client.pinger(addr, PingIdentifier(0)).await;
                 let sequence = PingSequence(0);
                 let payload = [];
@@ -160,27 +172,19 @@ impl PingService {
                 if let Ok(Ok((_, rtt))) =
                     timeout(icmp_timeout, pinger.ping(sequence, &payload)).await
                 {
-                    tracing::debug!(relay = %relay.ipv4, rtt_ms = %rtt.as_millis(), "ICMP success");
+                    tracing::debug!(relay = %ipv4, rtt_ms = %rtt.as_millis(), "ICMP success");
                     return Some(rtt);
                 }
-                tracing::debug!(relay = %relay.ipv4, "ICMP failed, falling back to TCP");
+                tracing::debug!(relay = %ipv4, "ICMP failed, falling back to TCP");
             }
         }
 
         // Fall back to TCP connect on the first port in the relay's range.
-        let rtt = self.tcp_connect(&relay.ipv4, relay.port_range_min).await;
+        let rtt = self.tcp_connect(ipv4, port).await;
         if rtt.is_some() {
-            tracing::debug!(
-                relay = %relay.ipv4,
-                port = relay.port_range_min,
-                "TCP fallback success"
-            );
+            tracing::debug!(relay = %ipv4, port = port, "TCP fallback success");
         } else {
-            tracing::debug!(
-                relay = %relay.ipv4,
-                port = relay.port_range_min,
-                "TCP fallback failed"
-            );
+            tracing::debug!(relay = %ipv4, port = port, "TCP fallback failed");
         }
         rtt
     }
