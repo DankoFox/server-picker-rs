@@ -153,6 +153,7 @@ fn preset_row<'a>(
                     text_color: palette.text,
                     border: iced::Border::default(),
                     shadow: iced::Shadow::default(),
+                    snap: false,
                 }
             })
             .into()

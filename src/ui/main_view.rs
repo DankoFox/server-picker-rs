@@ -5,7 +5,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length, Padding, Theme};
 
-const CONTROL_SPACING: u16 = 4;
+const CONTROL_SPACING: f32 = 4.0;
 const SECTION_PADDING: Padding = Padding {
     top: 4.0,
     right: 10.0,
@@ -15,7 +15,7 @@ const SECTION_PADDING: Padding = Padding {
 
 pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     let progress: Element<Message> = if app.pending_operation {
-        ProgressBar::new(0.0..=1.0, 0.5)
+        Container::new(ProgressBar::new(0.0..=1.0, 0.5))
             .height(3)
             .width(Length::Fill)
             .into()
@@ -139,13 +139,13 @@ fn control_bar<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
         .push(config_group)
         .push(separator())
         .push(preset_group)
-        .spacing(CONTROL_SPACING * 2)
+        .spacing(CONTROL_SPACING * 2.0)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
     let bottom_row = Row::new()
         .push(action_group)
-        .spacing(CONTROL_SPACING * 2)
+        .spacing(CONTROL_SPACING * 2.0)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
@@ -206,6 +206,7 @@ fn toolbar_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
                     radius: iced::border::Radius::from(4.0),
                 },
                 shadow: iced::Shadow::default(),
+                snap: false,
             }
         })
 }
@@ -229,6 +230,7 @@ fn primary_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
                     radius: iced::border::Radius::from(4.0),
                 },
                 shadow: iced::Shadow::default(),
+                snap: false,
             }
         })
 }
@@ -251,6 +253,7 @@ fn danger_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
                     radius: iced::border::Radius::from(4.0),
                 },
                 shadow: iced::Shadow::default(),
+                snap: false,
             }
         })
 }
@@ -273,6 +276,7 @@ fn success_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
                     radius: iced::border::Radius::from(4.0),
                 },
                 shadow: iced::Shadow::default(),
+                snap: false,
             }
         })
 }

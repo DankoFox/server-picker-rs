@@ -2,7 +2,7 @@ use crate::app::{Message, ServerPickerApp};
 use iced::widget::{button, container, mouse_area, row, text, Row};
 use iced::{Alignment, Element, Length, Padding, Theme};
 
-const TITLE_BAR_HEIGHT: u16 = 34;
+const TITLE_BAR_HEIGHT: f32 = 34.0;
 const BUTTON_WIDTH: f32 = 44.0;
 
 pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
@@ -59,6 +59,7 @@ fn title_bar_button<'a>(label: &'a str, message: Message) -> Element<'a, Message
             text_color: palette.text,
             border: iced::Border::default(),
             shadow: iced::Shadow::default(),
+            snap: false,
         }
     })
     .into()

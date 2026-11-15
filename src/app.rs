@@ -27,6 +27,7 @@ pub struct PresetDialogState {
 }
 
 /// Services and configuration passed into the Iced application.
+#[derive(Clone)]
 pub struct AppFlags {
     pub definitions: Vec<GameModeDefinition>,
     pub settings: SettingsService,
@@ -164,7 +165,7 @@ impl ServerPickerApp {
             startup_preset_pending: active_preset.is_some(),
         };
 
-        let mut tasks = vec![iced::window::get_oldest().map(Message::WindowIdReceived)];
+        let mut tasks = vec![iced::window::oldest().map(Message::WindowIdReceived)];
 
         if app.current_definition().is_some() {
             tasks.push(Task::done(Message::LoadServers));

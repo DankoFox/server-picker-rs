@@ -12,7 +12,7 @@ async-trait = "0.1"
 base64 = "0.22"
 directories = "5"
 libc = "0.2"
-iced = { version = "0.13", features = ["tokio", "svg"] }
+iced = { version = "0.14", features = ["tokio", "svg"] }
 open = "5"
 reqwest = { version = "0.12", features = ["json"] }
 rs-grid-icons = "0.1"

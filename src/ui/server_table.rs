@@ -4,8 +4,8 @@ use iced::{Alignment, Element, Length, Padding, Theme};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-const HEADER_HEIGHT: u16 = 32;
-const ROW_HEIGHT: u16 = 36;
+const HEADER_HEIGHT: f32 = 32.0;
+const ROW_HEIGHT: f32 = 36.0;
 
 pub fn view<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     let headers = header_row();
@@ -80,7 +80,7 @@ fn data_row<'a>(
     is_selected: bool,
 ) -> Element<'a, Message> {
     let key_for_checkbox = key.clone();
-    let checkbox_widget = checkbox("", is_selected)
+    let checkbox_widget = checkbox(is_selected)
         .on_toggle(move |_| Message::ToggleServerSelection(key_for_checkbox.clone()));
 
     let description_text = server.description.clone();
@@ -143,6 +143,7 @@ fn data_row<'a>(
                 text_color: palette.text,
                 border: iced::Border::default(),
                 shadow: iced::Shadow::default(),
+                snap: false,
             }
         })
         .into()

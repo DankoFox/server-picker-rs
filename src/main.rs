@@ -9,10 +9,11 @@ fn main() -> iced::Result {
         .expect("failed to initialize application");
 
     iced::application(
-        ServerPickerApp::title,
+        move || ServerPickerApp::new(flags.clone()),
         ServerPickerApp::update,
         ServerPickerApp::view,
     )
+    .title(ServerPickerApp::title)
     .theme(ServerPickerApp::theme)
     .subscription(ServerPickerApp::subscription)
     .window(iced::window::Settings {
@@ -21,5 +22,5 @@ fn main() -> iced::Result {
         min_size: Some(iced::Size::new(600.0, 400.0)),
         ..iced::window::Settings::default()
     })
-    .run_with(move || ServerPickerApp::new(flags))
+    .run()
 }
