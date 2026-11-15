@@ -285,10 +285,10 @@ fn success_button<'a>(label: &'a str, message: Message) -> Button<'a, Message> {
 
 fn status_footer<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     let paypal = Button::new(Text::new("PayPal").size(12))
-        .on_press(Message::OpenUrl("https://paypal.me".to_string()))
+        .on_press(Message::OpenUrl("https://paypal.me/dankofox".to_string()))
         .padding(4);
     let github = Button::new(Text::new("GitHub").size(12))
-        .on_press(Message::OpenUrl("https://github.com".to_string()))
+        .on_press(Message::OpenUrl("https://github.com/DankoFox".to_string()))
         .padding(4);
     let settings = Button::new(Text::new("Settings").size(12))
         .on_press(Message::StatusSet(
@@ -307,7 +307,8 @@ fn status_footer<'a>(app: &'a ServerPickerApp) -> Element<'a, Message> {
     .padding(4);
 
     let status = Container::new(Text::new(&app.status_message).size(12))
-        .align_y(iced::Alignment::Center)
+        .align_x(Alignment::End)
+        .align_y(Alignment::Center)
         .height(Length::Fill)
         .width(Length::Fill);
 
